@@ -73,20 +73,13 @@ class WorkflowRun(BaseModel):
             return None
 
         if value.tzinfo is None or value.utcoffset() is None:
-            raise ValueError(
-                "datetime must include timezone information"
-            )
+            raise ValueError("datetime must include timezone information")
 
         return value
 
     @model_validator(mode="after")
     def validate_timestamp_order(self) -> "WorkflowRun":
-        if (
-            self.completed_at is not None
-            and self.completed_at < self.started_at
-        ):
-            raise ValueError(
-                "completed_at cannot be earlier than started_at"
-            )
+        if self.completed_at is not None and self.completed_at < self.started_at:
+            raise ValueError("completed_at cannot be earlier than started_at")
 
         return self
