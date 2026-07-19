@@ -92,10 +92,14 @@ class WorkflowRunModel(Base):
         ),
         CheckConstraint("retry_count >= 0", name="ck_workflow_retry_count_nonnegative"),
         CheckConstraint(
+            "revision_number >= 0", name="ck_workflow_revision_nonnegative"
+        ),
+        CheckConstraint(
             "quality_score IS NULL OR (quality_score >= 0 AND quality_score <= 100)",
             name="ck_workflow_quality_score_range",
         ),
         Index("ix_workflow_runs_campaign_status", "campaign_id", "status"),
+        Index("ix_workflow_runs_parent_workflow_id", "parent_workflow_id"),
         Index(
             "uq_workflow_runs_one_active_per_campaign",
             "campaign_id",
@@ -118,6 +122,10 @@ class WorkflowRunModel(Base):
         nullable=False,
         index=True,
     )
+    parent_workflow_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("workflow_runs.workflow_id", ondelete="SET NULL"),
+    )
+    revision_number: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     status: Mapped[str] = mapped_column(
         String(50),
         nullable=False,
@@ -149,6 +157,9 @@ class WorkflowRunModel(Base):
     lock_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
     campaign: Mapped[CampaignModel] = relationship(back_populates="workflow_runs")
+    parent_workflow: Mapped[WorkflowRunModel | None] = relationship(
+        remote_side="WorkflowRunModel.workflow_id",
+    )
     approvals: Mapped[list[ApprovalRecordModel]] = relationship(
         back_populates="workflow_run",
         cascade="all, delete-orphan",

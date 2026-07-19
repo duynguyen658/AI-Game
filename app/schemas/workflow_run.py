@@ -27,6 +27,13 @@ class WorkflowRun(BaseModel):
         max_length=100,
     )
 
+    parent_workflow_id: UUID | None = None
+
+    revision_number: int = Field(
+        default=0,
+        ge=0,
+    )
+
     status: CampaignStatus = CampaignStatus.RECEIVED
 
     current_step: WorkflowStep = WorkflowStep.RECEIVE_CAMPAIGN

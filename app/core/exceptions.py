@@ -54,6 +54,10 @@ class WorkflowAlreadyActiveError(ApplicationError):
     error_code = "WORKFLOW_ALREADY_ACTIVE"
 
 
+class WorkflowCreationNotAllowedError(ApplicationError):
+    error_code = "WORKFLOW_CREATION_NOT_ALLOWED"
+
+
 class InvalidStateTransitionError(ApplicationError):
     error_code = "INVALID_STATE_TRANSITION"
 
@@ -72,3 +76,7 @@ class VersionConflictError(ApplicationError):
 
 class DatabaseUnavailableError(ApplicationError):
     error_code = "DATABASE_UNAVAILABLE"
+
+
+class PersistenceError(ApplicationError):
+    error_code = "PERSISTENCE_ERROR"

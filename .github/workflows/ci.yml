@@ -2,7 +2,11 @@ name: CI
 
 on:
   push:
+    branches:
+      - feature/repository-layer
   pull_request:
+    branches:
+      - main
 
 jobs:
   test:
@@ -29,6 +33,7 @@ jobs:
       JWT_SECRET_KEY: test-jwt-secret
       N8N_WEBHOOK_SECRET: test-webhook-secret
       APPROVAL_TOKEN_SECRET: test-approval-secret
+      RUN_POSTGRES_TESTS: "1"
 
     steps:
       - uses: actions/checkout@v4
@@ -44,10 +49,10 @@ jobs:
         run: alembic upgrade head
 
       - name: Ruff
-        run: python -m ruff check app tests
+        run: python -m ruff check app tests alembic
 
       - name: Ruff format
-        run: python -m ruff format --check app tests
+        run: python -m ruff format --check app tests alembic
 
       - name: Mypy
         run: python -m mypy app

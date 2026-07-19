@@ -27,6 +27,14 @@ Approval Request
 -> Immutable Approval Record
 ```
 
+Multi-row transactions use one lock order:
+
+```text
+Campaign
+-> Workflow
+-> Approval or related child rows
+```
+
 ## Local Setup
 
 Create a local `.env` from `.env.example`, then start PostgreSQL:
@@ -85,10 +93,19 @@ Approval decisions are append-only. The database enforces one approval record pe
 workflow. A revision request closes the old workflow at `REVISION_REQUIRED`,
 increments the campaign version, and leaves the campaign in `REVISION_REQUIRED`.
 Create a new workflow for that campaign to continue revision generation; the new
-workflow starts at `REVISION_REQUIRED` and can run back to `PENDING_APPROVAL`.
+workflow starts at `REVISION_REQUIRED`, stores `parent_workflow_id`, increments
+`revision_number`, and can run back to `PENDING_APPROVAL`.
 
 The database also enforces one active workflow per campaign with a PostgreSQL
 partial unique index over active statuses where `completed_at IS NULL`.
+
+Workflow creation is allowed only for campaigns in `RECEIVED` or
+`REVISION_REQUIRED`. Approved, rejected, failed, pending approval, and manual
+review campaigns cannot be reopened implicitly.
+
+Approval APIs require authentication. In development and tests, approval requests
+may pass `x-actor-id` and `x-actor-role`; production should use Bearer JWTs with
+`sub` and `role` claims.
 
 ## Database
 
@@ -121,11 +138,28 @@ python -m pytest -v
 python -m pytest --cov=app --cov-report=term-missing
 ```
 
+PostgreSQL integration and E2E tests are guarded to avoid mutating a developer
+database accidentally. Run them only against a migrated test database:
+
+```bash
+set RUN_POSTGRES_TESTS=1
+python -m pytest tests/integration -v
+```
+
+CI sets `RUN_POSTGRES_TESTS=1`, starts PostgreSQL, applies Alembic migrations,
+and runs the full quality suite.
+
 ## Security
 
 Production rejects unsafe `change-me` secrets. The mock LLM provider requires no API
 key and is the default for tests. Real OpenAI usage requires `LLM_PROVIDER=openai`,
 `LLM_API_KEY`, and `LLM_MODEL`.
+
+## Current Limitations
+
+M3 keeps workflow execution synchronous. It does not include queues, background
+workers, publication integrations, or Agentic AI orchestration. Manual review
+resolution from `MANUAL_REVIEW_REQUIRED` remains a future explicit product flow.
 
 ## Deferred Agentic AI Work
 

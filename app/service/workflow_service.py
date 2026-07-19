@@ -6,18 +6,29 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.core.constants import CampaignStatus, WorkflowStep
+import structlog
+
+from app.core.constants import (
+    WORKFLOW_CREATABLE_CAMPAIGN_STATUSES,
+    CampaignStatus,
+    WorkflowStep,
+)
 from app.core.exceptions import (
     CampaignNotFoundError,
+    PersistenceError,
     WorkflowAlreadyActiveError,
+    WorkflowCreationNotAllowedError,
     WorkflowLimitError,
     WorkflowNotFoundError,
 )
+from app.database.integrity import get_constraint_name
 from app.repositories.campaign_repository import CampaignRepository
 from app.repositories.workflow_repository import WorkflowRepository
 from app.schemas.workflow_run import WorkflowRun
 from app.service.mappers import workflow_to_schema
 from app.workflows.workflow_state import ensure_valid_transition
+
+logger = structlog.get_logger()
 
 
 class WorkflowService:
@@ -31,24 +42,51 @@ class WorkflowService:
         campaign = await self.campaign_repository.get_by_id_for_update(campaign_id)
         if campaign is None:
             raise CampaignNotFoundError("Campaign not found")
+        campaign_status = CampaignStatus(campaign.status)
+        if campaign_status not in WORKFLOW_CREATABLE_CAMPAIGN_STATUSES:
+            await self.session.rollback()
+            raise WorkflowCreationNotAllowedError(
+                f"Cannot create workflow for campaign in {campaign_status.value}"
+            )
         active = await self.workflow_repository.get_active_for_campaign(campaign_id)
         if active is not None:
+            await self.session.rollback()
             raise WorkflowAlreadyActiveError("Campaign already has an active workflow")
         try:
-            if CampaignStatus(campaign.status) == CampaignStatus.REVISION_REQUIRED:
+            if campaign_status == CampaignStatus.REVISION_REQUIRED:
+                parent = (
+                    await self.workflow_repository.latest_revision_parent_for_campaign(
+                        campaign_id
+                    )
+                )
+                if parent is None:
+                    await self.session.rollback()
+                    raise WorkflowCreationNotAllowedError(
+                        "Revision workflow requires a completed parent workflow"
+                    )
                 workflow = await self.workflow_repository.create(
                     campaign_id,
                     status=CampaignStatus.REVISION_REQUIRED,
                     current_step=WorkflowStep.HUMAN_REVIEW,
+                    parent_workflow_id=parent.workflow_id,
+                    revision_number=parent.revision_number + 1,
                 )
             else:
                 workflow = await self.workflow_repository.create(campaign_id)
             await self.session.commit()
         except IntegrityError as exc:
             await self.session.rollback()
-            raise WorkflowAlreadyActiveError(
-                "Campaign already has an active workflow"
-            ) from exc
+            constraint_name = get_constraint_name(exc)
+            logger.warning(
+                "workflow_create_integrity_error",
+                constraint_name=constraint_name,
+                operation="create_workflow",
+            )
+            if constraint_name == "uq_workflow_runs_one_active_per_campaign":
+                raise WorkflowAlreadyActiveError(
+                    "Campaign already has an active workflow"
+                ) from exc
+            raise PersistenceError("Workflow could not be persisted") from exc
         return workflow_to_schema(workflow)
 
     async def get_workflow(self, workflow_id: UUID) -> WorkflowRun:
@@ -64,14 +102,18 @@ class WorkflowService:
         *,
         step: WorkflowStep | None = None,
     ) -> WorkflowRun:
-        workflow = await self.workflow_repository.get_by_id_for_update(workflow_id)
-        if workflow is None:
+        workflow_hint = await self.workflow_repository.get_by_id(workflow_id)
+        if workflow_hint is None:
             raise WorkflowNotFoundError("Workflow not found")
         campaign = await self.campaign_repository.get_by_id_for_update(
-            workflow.campaign_id
+            workflow_hint.campaign_id
         )
         if campaign is None:
             raise CampaignNotFoundError("Campaign not found")
+        workflow = await self.workflow_repository.get_by_id_for_update(workflow_id)
+        if workflow is None or workflow.campaign_id != campaign.campaign_id:
+            await self.session.rollback()
+            raise WorkflowNotFoundError("Workflow not found")
         ensure_valid_transition(CampaignStatus(workflow.status), next_status)
         await self.workflow_repository.update_status(workflow, next_status)
         await self.campaign_repository.update_status(campaign, next_status)

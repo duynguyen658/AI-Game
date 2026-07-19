@@ -45,6 +45,11 @@ TERMINAL_WORKFLOW_STATUS_VALUES = (
     CampaignStatus.FAILED.value,
 )
 
+WORKFLOW_CREATABLE_CAMPAIGN_STATUSES = {
+    CampaignStatus.RECEIVED,
+    CampaignStatus.REVISION_REQUIRED,
+}
+
 
 class WorkflowStep(StrEnum):
     RECEIVE_CAMPAIGN = "RECEIVE_CAMPAIGN"

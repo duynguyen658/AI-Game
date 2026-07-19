@@ -11,6 +11,8 @@ def test_workflow_run_uses_defaults() -> None:
     workflow = WorkflowRun(campaign_id="CL-PREREG-001")
 
     assert workflow.workflow_id is not None
+    assert workflow.parent_workflow_id is None
+    assert workflow.revision_number == 0
     assert workflow.status == CampaignStatus.RECEIVED
     assert workflow.current_step == WorkflowStep.RECEIVE_CAMPAIGN
     assert workflow.llm_call_count == 0

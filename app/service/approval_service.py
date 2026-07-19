@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import structlog
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,9 +9,11 @@ from app.core.exceptions import (
     ApprovalAlreadyDecidedError,
     ApprovalNotAllowedError,
     CampaignNotFoundError,
+    PersistenceError,
     VersionConflictError,
     WorkflowNotFoundError,
 )
+from app.database.integrity import get_constraint_name
 from app.repositories.approval_repository import ApprovalRepository
 from app.repositories.campaign_repository import CampaignRepository
 from app.repositories.workflow_repository import WorkflowRepository
@@ -19,6 +22,7 @@ from app.service.mappers import approval_to_schema
 from app.workflows.workflow_state import ensure_valid_transition
 
 APPROVER_ROLES = {UserRole.REVIEWER, UserRole.MANAGER, UserRole.ADMIN}
+logger = structlog.get_logger()
 
 
 class ApprovalService:
@@ -89,7 +93,15 @@ class ApprovalService:
             await self.session.commit()
         except IntegrityError as exc:
             await self.session.rollback()
-            raise ApprovalAlreadyDecidedError(
-                "Workflow already has an approval decision"
-            ) from exc
+            constraint_name = get_constraint_name(exc)
+            logger.warning(
+                "approval_integrity_error",
+                constraint_name=constraint_name,
+                operation="create_approval_record",
+            )
+            if constraint_name == "uq_approval_records_workflow_id":
+                raise ApprovalAlreadyDecidedError(
+                    "Workflow already has an approval decision"
+                ) from exc
+            raise PersistenceError("Approval decision could not be persisted") from exc
         return approval_to_schema(record)

@@ -27,9 +27,13 @@ class WorkflowRepository:
         *,
         status: CampaignStatus = CampaignStatus.RECEIVED,
         current_step: WorkflowStep = WorkflowStep.RECEIVE_CAMPAIGN,
+        parent_workflow_id: UUID | None = None,
+        revision_number: int = 0,
     ) -> WorkflowRunModel:
         model = WorkflowRunModel(
             campaign_id=campaign_id,
+            parent_workflow_id=parent_workflow_id,
+            revision_number=revision_number,
             status=status.value,
             current_step=current_step.value,
         )
@@ -45,6 +49,23 @@ class WorkflowRepository:
             select(WorkflowRunModel)
             .where(WorkflowRunModel.workflow_id == workflow_id)
             .with_for_update()
+        )
+        return result.scalar_one_or_none()
+
+    async def latest_revision_parent_for_campaign(
+        self,
+        campaign_id: str,
+    ) -> WorkflowRunModel | None:
+        result = await self.session.execute(
+            select(WorkflowRunModel)
+            .where(WorkflowRunModel.campaign_id == campaign_id)
+            .where(WorkflowRunModel.status == CampaignStatus.REVISION_REQUIRED.value)
+            .where(WorkflowRunModel.completed_at.is_not(None))
+            .order_by(
+                WorkflowRunModel.revision_number.desc(),
+                WorkflowRunModel.completed_at.desc(),
+            )
+            .limit(1)
         )
         return result.scalar_one_or_none()
 

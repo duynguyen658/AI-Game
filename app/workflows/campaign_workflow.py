@@ -13,8 +13,18 @@ from app.core.config import get_settings
 from app.core.constants import CampaignStatus, WorkflowStep
 from app.core.exceptions import (
     ApplicationError,
+    ApprovalAlreadyDecidedError,
+    ApprovalNotAllowedError,
+    AuthenticationError,
+    AuthorizationError,
     CampaignNotFoundError,
+    InvalidStateTransitionError,
+    LLMProviderError,
+    LLMResponseError,
+    LLMTimeoutError,
     VersionConflictError,
+    WorkflowAlreadyActiveError,
+    WorkflowCreationNotAllowedError,
     WorkflowExecutionError,
     WorkflowLimitError,
     WorkflowNotFoundError,
@@ -28,6 +38,27 @@ from app.service.mappers import workflow_to_schema
 from app.workflows.workflow_state import can_transition, ensure_valid_transition
 
 logger = structlog.get_logger()
+
+CONFLICT_ERRORS = (
+    ApprovalAlreadyDecidedError,
+    ApprovalNotAllowedError,
+    AuthenticationError,
+    AuthorizationError,
+    InvalidStateTransitionError,
+    VersionConflictError,
+    WorkflowAlreadyActiveError,
+    WorkflowCreationNotAllowedError,
+    WorkflowNotFoundError,
+    CampaignNotFoundError,
+)
+
+EXECUTION_FAILURE_ERRORS = (
+    LLMProviderError,
+    LLMResponseError,
+    LLMTimeoutError,
+    WorkflowExecutionError,
+    WorkflowLimitError,
+)
 
 SECRET_REPLACEMENTS = (
     (
@@ -172,7 +203,10 @@ class CampaignWorkflow:
                 raise WorkflowExecutionError(
                     f"Workflow cannot resume from {status.value}"
                 )
-        except ApplicationError as exc:
+        except CONFLICT_ERRORS:
+            await self.session.rollback()
+            raise
+        except EXECUTION_FAILURE_ERRORS as exc:
             await self._persist_failure(workflow_id, exc)
             raise
         except Exception as exc:
@@ -350,16 +384,23 @@ class CampaignWorkflow:
         )
 
     async def _load_locked_pair(self, workflow_id: UUID):
-        workflow = await self.workflow_repository.get_by_id_for_update(workflow_id)
-        if workflow is None:
+        # Lock order for every multi-row workflow transaction:
+        # Campaign -> Workflow -> child rows. The initial unlocked read only discovers
+        # the campaign_id needed to acquire locks in that order.
+        workflow_hint = await self.workflow_repository.get_by_id(workflow_id)
+        if workflow_hint is None:
             await self.session.rollback()
             raise WorkflowNotFoundError("Workflow not found")
         campaign = await self.campaign_repository.get_by_id_for_update(
-            workflow.campaign_id
+            workflow_hint.campaign_id
         )
         if campaign is None:
             await self.session.rollback()
             raise CampaignNotFoundError("Campaign not found")
+        workflow = await self.workflow_repository.get_by_id_for_update(workflow_id)
+        if workflow is None or workflow.campaign_id != campaign.campaign_id:
+            await self.session.rollback()
+            raise WorkflowNotFoundError("Workflow not found")
         return workflow, campaign
 
     def _ensure_expected_status(

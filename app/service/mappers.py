@@ -68,6 +68,8 @@ def workflow_to_schema(model: WorkflowRunModel) -> WorkflowRun:
     return WorkflowRun(
         workflow_id=model.workflow_id,
         campaign_id=model.campaign_id,
+        parent_workflow_id=model.parent_workflow_id,
+        revision_number=model.revision_number,
         status=CampaignStatus(model.status),
         current_step=WorkflowStep(model.current_step),
         llm_call_count=model.llm_call_count,
