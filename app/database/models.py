@@ -14,11 +14,16 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.core.constants import CampaignStatus, WorkflowStep
+from app.core.constants import (
+    ACTIVE_WORKFLOW_STATUS_VALUES,
+    CampaignStatus,
+    WorkflowStep,
+)
 from app.database.base import Base, utc_now
 
 
@@ -91,6 +96,16 @@ class WorkflowRunModel(Base):
             name="ck_workflow_quality_score_range",
         ),
         Index("ix_workflow_runs_campaign_status", "campaign_id", "status"),
+        Index(
+            "uq_workflow_runs_one_active_per_campaign",
+            "campaign_id",
+            unique=True,
+            postgresql_where=text(
+                "completed_at IS NULL AND status IN ("
+                + ", ".join(f"'{status}'" for status in ACTIVE_WORKFLOW_STATUS_VALUES)
+                + ")"
+            ),
+        ),
     )
 
     workflow_id: Mapped[UUID] = mapped_column(
@@ -149,11 +164,7 @@ class ApprovalRecordModel(Base):
         CheckConstraint(
             "resulting_version >= previous_version", name="ck_approval_version_order"
         ),
-        UniqueConstraint(
-            "workflow_id",
-            "decision",
-            name="uq_approval_workflow_decision",
-        ),
+        UniqueConstraint("workflow_id", name="uq_approval_records_workflow_id"),
         Index("ix_approval_records_campaign_decided_at", "campaign_id", "decided_at"),
     )
 

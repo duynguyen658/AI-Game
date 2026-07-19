@@ -61,6 +61,35 @@ Useful endpoints:
 - `POST /workflows/{workflow_id}/run`
 - `POST /approvals`
 
+## Workflow Behavior
+
+`POST /workflows/{workflow_id}/run` executes a deterministic synchronous workflow
+with short database checkpoints. Database rows are not locked while an LLM call is
+running. The app reserves an LLM call, commits that counter, calls the configured
+LLM client, then locks the rows again before persisting the result.
+
+Content generation is retried only for bounded review failures:
+
+```text
+GENERATING -> REVIEWING -> GENERATING
+```
+
+Retries stop when `MAX_CONTENT_RETRIES` is exhausted. A passing review reaches
+`PENDING_APPROVAL`. A review with `MANUAL_REVIEW_REQUIRED`, or exhausted retries,
+stays in `MANUAL_REVIEW_REQUIRED`; it is not silently promoted to final approval.
+
+If workflow execution fails before a terminal/manual/approval state, the failure is
+persisted as `FAILED` with a stable error code and a sanitized error message.
+
+Approval decisions are append-only. The database enforces one approval record per
+workflow. A revision request closes the old workflow at `REVISION_REQUIRED`,
+increments the campaign version, and leaves the campaign in `REVISION_REQUIRED`.
+Create a new workflow for that campaign to continue revision generation; the new
+workflow starts at `REVISION_REQUIRED` and can run back to `PENDING_APPROVAL`.
+
+The database also enforces one active workflow per campaign with a PostgreSQL
+partial unique index over active statuses where `completed_at IS NULL`.
+
 ## Database
 
 The app uses async SQLAlchemy with `postgresql+asyncpg`.

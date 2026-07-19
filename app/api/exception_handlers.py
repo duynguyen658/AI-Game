@@ -13,6 +13,7 @@ from app.core.exceptions import (
     InvalidStateTransitionError,
     VersionConflictError,
     WorkflowAlreadyActiveError,
+    WorkflowExecutionError,
     WorkflowLimitError,
     WorkflowNotFoundError,
 )
@@ -30,6 +31,7 @@ ERROR_STATUS_MAP: dict[type[ApplicationError], int] = {
     VersionConflictError: status.HTTP_409_CONFLICT,
     WorkflowLimitError: status.HTTP_409_CONFLICT,
     DatabaseUnavailableError: status.HTTP_503_SERVICE_UNAVAILABLE,
+    WorkflowExecutionError: status.HTTP_500_INTERNAL_SERVER_ERROR,
 }
 
 

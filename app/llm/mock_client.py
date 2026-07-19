@@ -19,8 +19,16 @@ from app.schemas.campaign import (
 
 
 class MockLLMClient:
-    def __init__(self, scripted_failures: list[Exception] | None = None) -> None:
+    def __init__(
+        self,
+        scripted_failures: list[Exception] | None = None,
+        scripted_outputs: list[BaseModel | Exception] | None = None,
+    ) -> None:
         self.scripted_failures: Deque[Exception] = deque(scripted_failures or [])
+        self.scripted_outputs: Deque[BaseModel | Exception] = deque(
+            scripted_outputs or []
+        )
+        self.call_count = 0
 
     async def generate_structured(
         self,
@@ -31,8 +39,16 @@ class MockLLMClient:
     ) -> BaseModel:
         del system_prompt, user_prompt
         await asyncio.sleep(0)
+        self.call_count += 1
         if self.scripted_failures:
             raise self.scripted_failures.popleft()
+        if self.scripted_outputs:
+            scripted_output = self.scripted_outputs.popleft()
+            if isinstance(scripted_output, Exception):
+                raise scripted_output
+            if not isinstance(scripted_output, output_schema):
+                raise LLMResponseError("Scripted output did not match requested schema")
+            return scripted_output
         if output_schema is BriefAnalysis:
             return BriefAnalysis(
                 summary="Cyber Legends pre-registration campaign for core action RPG players.",

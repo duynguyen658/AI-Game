@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import ApprovalDecision, CampaignStatus, UserRole
@@ -69,19 +70,26 @@ class ApprovalService:
         ensure_valid_transition(CampaignStatus(workflow.status), next_status)
         await self.workflow_repository.update_status(workflow, next_status)
         await self.campaign_repository.update_status(campaign, next_status)
+
         await self.workflow_repository.mark_completed(workflow)
 
-        record = await self.approval_repository.create(
-            ApprovalRecord(
-                campaign_id=request.campaign_id,
-                workflow_id=request.workflow_id,
-                decision=request.decision,
-                feedback=request.feedback,
-                actor_id=actor_id,
-                actor_role=actor_role,
-                previous_version=previous_version,
-                resulting_version=resulting_version,
+        try:
+            record = await self.approval_repository.create(
+                ApprovalRecord(
+                    campaign_id=request.campaign_id,
+                    workflow_id=request.workflow_id,
+                    decision=request.decision,
+                    feedback=request.feedback,
+                    actor_id=actor_id,
+                    actor_role=actor_role,
+                    previous_version=previous_version,
+                    resulting_version=resulting_version,
+                )
             )
-        )
-        await self.session.commit()
+            await self.session.commit()
+        except IntegrityError as exc:
+            await self.session.rollback()
+            raise ApprovalAlreadyDecidedError(
+                "Workflow already has an approval decision"
+            ) from exc
         return approval_to_schema(record)

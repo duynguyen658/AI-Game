@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -27,14 +28,27 @@ class WorkflowService:
         self.settings = get_settings()
 
     async def create_workflow(self, campaign_id: str) -> WorkflowRun:
-        campaign = await self.campaign_repository.get_by_id(campaign_id)
+        campaign = await self.campaign_repository.get_by_id_for_update(campaign_id)
         if campaign is None:
             raise CampaignNotFoundError("Campaign not found")
         active = await self.workflow_repository.get_active_for_campaign(campaign_id)
         if active is not None:
             raise WorkflowAlreadyActiveError("Campaign already has an active workflow")
-        workflow = await self.workflow_repository.create(campaign_id)
-        await self.session.commit()
+        try:
+            if CampaignStatus(campaign.status) == CampaignStatus.REVISION_REQUIRED:
+                workflow = await self.workflow_repository.create(
+                    campaign_id,
+                    status=CampaignStatus.REVISION_REQUIRED,
+                    current_step=WorkflowStep.HUMAN_REVIEW,
+                )
+            else:
+                workflow = await self.workflow_repository.create(campaign_id)
+            await self.session.commit()
+        except IntegrityError as exc:
+            await self.session.rollback()
+            raise WorkflowAlreadyActiveError(
+                "Campaign already has an active workflow"
+            ) from exc
         return workflow_to_schema(workflow)
 
     async def get_workflow(self, workflow_id: UUID) -> WorkflowRun:
@@ -53,8 +67,14 @@ class WorkflowService:
         workflow = await self.workflow_repository.get_by_id_for_update(workflow_id)
         if workflow is None:
             raise WorkflowNotFoundError("Workflow not found")
+        campaign = await self.campaign_repository.get_by_id_for_update(
+            workflow.campaign_id
+        )
+        if campaign is None:
+            raise CampaignNotFoundError("Campaign not found")
         ensure_valid_transition(CampaignStatus(workflow.status), next_status)
         await self.workflow_repository.update_status(workflow, next_status)
+        await self.campaign_repository.update_status(campaign, next_status)
         if step is not None:
             await self.workflow_repository.update_current_step(workflow, step)
         await self.session.commit()

@@ -42,6 +42,10 @@ class WorkflowLimitError(ApplicationError):
     error_code = "WORKFLOW_LIMIT_ERROR"
 
 
+class WorkflowExecutionError(ApplicationError):
+    error_code = "WORKFLOW_EXECUTION_ERROR"
+
+
 class WorkflowNotFoundError(ApplicationError):
     error_code = "WORKFLOW_NOT_FOUND"
 

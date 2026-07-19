@@ -43,6 +43,27 @@ async def test_mock_llm_supports_scripted_failures() -> None:
         )
 
 
+@pytest.mark.asyncio
+async def test_mock_llm_supports_scripted_outputs() -> None:
+    expected_review = QualityReview(
+        status="FAIL",
+        quality_score=50,
+        factual_accuracy_score=50,
+        tone_score=55,
+        platform_fit_score=45,
+    )
+    client = MockLLMClient(scripted_outputs=[expected_review])
+
+    review = await client.generate_structured(
+        system_prompt="review",
+        user_prompt="content",
+        output_schema=QualityReview,
+    )
+
+    assert review == expected_review
+    assert client.call_count == 1
+
+
 def test_structured_output_rejects_malformed_json() -> None:
     with pytest.raises(LLMResponseError, match="not valid JSON"):
         validate_structured_output("{", BriefAnalysis)

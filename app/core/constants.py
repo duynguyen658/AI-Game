@@ -26,6 +26,26 @@ class CampaignStatus(StrEnum):
     FAILED = "FAILED"
 
 
+ACTIVE_WORKFLOW_STATUS_VALUES = (
+    CampaignStatus.RECEIVED.value,
+    CampaignStatus.VALIDATING.value,
+    CampaignStatus.NEEDS_CLARIFICATION.value,
+    CampaignStatus.ANALYZING.value,
+    CampaignStatus.GENERATING.value,
+    CampaignStatus.REVIEWING.value,
+    CampaignStatus.MANUAL_REVIEW_REQUIRED.value,
+    CampaignStatus.PENDING_APPROVAL.value,
+    CampaignStatus.REVISION_REQUIRED.value,
+)
+
+
+TERMINAL_WORKFLOW_STATUS_VALUES = (
+    CampaignStatus.APPROVED.value,
+    CampaignStatus.REJECTED.value,
+    CampaignStatus.FAILED.value,
+)
+
+
 class WorkflowStep(StrEnum):
     RECEIVE_CAMPAIGN = "RECEIVE_CAMPAIGN"
     VALIDATE_INPUT = "VALIDATE_INPUT"
