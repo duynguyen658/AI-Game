@@ -10,7 +10,8 @@ bcrypt
 python-multipart
 email-validator
 sqlalchemy
-aiosqlite
+asyncpg
+alembic
 structlog
 pytest
 pytest-asyncio

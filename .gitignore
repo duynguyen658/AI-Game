@@ -11,17 +11,27 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .coverage
+coverage.xml
 htmlcov/
+.hypothesis/
+.tox/
+.nox/
 
 # IDE
 .vscode/
 .idea/
+.DS_Store
 
 # Runtime data
 *.db
+*.db-*
 *.sqlite3
+*.log
 logs/
 data/private/
+build/
+dist/
+*.egg-info/
 
 # Secrets
 credentials/

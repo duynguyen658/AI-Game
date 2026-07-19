@@ -4,9 +4,15 @@ from typing import AsyncIterator
 import structlog
 from fastapi import FastAPI
 
+from app.api.approvals import router as approvals_router
+from app.api.campaigns import router as campaigns_router
+from app.api.exception_handlers import register_exception_handlers
 from app.api.health import router as health_router
+from app.api.workflows import router as workflows_router
 from app.core.config import get_settings
+from app.core.exceptions import DatabaseUnavailableError
 from app.core.logging_config import configure_logging
+from app.database.session import check_database_connection, dispose_database_engine
 
 settings = get_settings()
 configure_logging(settings.log_level)
@@ -23,6 +29,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
     yield
 
+    await dispose_database_engine()
     logger.info("application_stopped")
 
 
@@ -33,7 +40,11 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+register_exception_handlers(app)
 app.include_router(health_router)
+app.include_router(campaigns_router)
+app.include_router(workflows_router)
+app.include_router(approvals_router)
 
 
 @app.get("/")
@@ -42,3 +53,12 @@ async def root() -> dict[str, str]:
         "application": settings.app_name,
         "docs": "/docs",
     }
+
+
+@app.get("/ready", tags=["Health"])
+async def ready() -> dict[str, str]:
+    try:
+        await check_database_connection()
+    except Exception as exc:
+        raise DatabaseUnavailableError("Database is not ready") from exc
+    return {"status": "ready", "database": "ok"}
