@@ -101,15 +101,28 @@ Each specialist run is bounded by `AGENT_MAX_ITERATIONS`, `AGENT_MAX_LLM_CALLS`,
 final output, a provider or validation failure, timeout, or any exhausted limit.
 There is no recursive or unbounded loop.
 
-M4 tools expose only campaign/workflow snapshots and existing artifacts. Inputs are
-schema validated and scoped to the run's campaign/workflow; outputs are sanitized,
-treated as untrusted, and truncated to `AGENT_MAX_TOOL_RESULT_CHARACTERS`. There are
-no shell, filesystem, network, or write-capable Agent tools.
+M4 tools expose only fresh, read-only views of prior workflow summaries, revisions,
+and quality feedback. A tool reads through `AgentReadQueryService`, then a repository,
+inside a short lock-free PostgreSQL read transaction. Inputs are schema validated and
+scoped to the run's campaign/workflow; outputs are sanitized, treated as untrusted,
+and truncated to `AGENT_MAX_TOOL_RESULT_CHARACTERS`. There are no shell, filesystem,
+network, or write-capable Agent tools.
+
+Each specialist receives a frozen, typed context containing only what it needs. The
+analyst receives campaign brief data, the generator receives validated analysis and
+relevant revision feedback, and the reviewer receives the analysis plus generated
+content. Contexts contain no ORM objects, database sessions, credentials, or provider
+payloads.
 
 Every specialist execution creates an `agent_runs` audit row with prompt version and
-counters. Every attempted tool execution creates an `agent_tool_calls` row with
-sanitized arguments, bounded result summary, status, duration, and safe error fields.
-Prompts and hidden reasoning are not persisted.
+counters. Its lifecycle is `CREATED -> RUNNING -> COMPLETED`, with `FAILED` and
+`LIMIT_EXCEEDED` as terminal alternatives. Every attempted tool execution creates an
+`agent_tool_calls` row with sanitized arguments, bounded result summary, status,
+duration, and safe error fields. Tool calls move from `REQUESTED` to `RUNNING` and
+then to `COMPLETED` or `FAILED`; rejected requests terminate as `REJECTED`. Internal
+tool timeouts, outer Agent timeouts, and explicit task cancellation are finalized as
+safe terminal audit records, so no interrupted call remains `RUNNING`. Prompts,
+hidden reasoning, provider payloads, and raw database errors are not persisted.
 
 `MockLLMClient` supports `scripted_turns` containing `AgentTurn` values for fully
 deterministic tool-call/final-output tests. Default tests never contact a real LLM.
@@ -141,9 +154,14 @@ Workflow creation is allowed only for campaigns in `RECEIVED` or
 `REVISION_REQUIRED`. Approved, rejected, failed, pending approval, and manual
 review campaigns cannot be reopened implicitly.
 
-Approval APIs require authentication. In development and tests, approval requests
-may pass `x-actor-id` and `x-actor-role`; production should use Bearer JWTs with
-`sub` and `role` claims.
+Approval and Agent-run audit APIs require authentication. Agent-run audit reads are
+authorized only for `REVIEWER`, `MANAGER`, `ADMIN`, and `SYSTEM`; other authenticated
+roles receive `403`. In development and tests, requests may pass `x-actor-id` and
+`x-actor-role`; production should use Bearer JWTs with `sub` and `role` claims.
+
+The audit API returns identifiers, lifecycle status, counters, timestamps, sanitized
+bounded tool arguments/results, and stable safe error fields. It never returns raw
+prompts, hidden reasoning, credentials, provider payloads, or raw database details.
 
 ## Database
 
@@ -185,6 +203,15 @@ set RUN_POSTGRES_TESTS=1
 python -m pytest tests/integration -v
 ```
 
+Run the complete deterministic M4 suite and coverage report with:
+
+```bash
+set RUN_POSTGRES_TESTS=1
+set LLM_PROVIDER=mock
+python -m pytest -v
+python -m pytest --cov=app --cov-report=term-missing
+```
+
 CI sets `RUN_POSTGRES_TESTS=1`, starts PostgreSQL, applies Alembic migrations,
 runs an Alembic drift check, and executes the full quality suite. The PostgreSQL
 suite covers repository persistence, database constraints, workflow/service
@@ -200,8 +227,10 @@ key and is the default for tests. Real OpenAI usage requires `LLM_PROVIDER=opena
 ## Current Limitations and M5
 
 M4 keeps execution synchronous and has no long-term, episodic, or semantic memory.
-All tools are read-only. It does not include queues, controlled write actions, a policy
-engine, human approval for tools, vector retrieval, autonomous publication,
-supervisor delegation, external integrations, or advanced evaluation/tracing. Those
-safety, action, and memory capabilities remain deferred to M5 or later. Manual review
-resolution from `MANUAL_REVIEW_REQUIRED` also remains a future explicit product flow.
+M4 tools are read-only. Agents do not approve campaigns. Agents do not publish
+campaigns. Agents do not directly change workflow state. It does not include queues,
+controlled write actions, a policy engine, action approval, vector retrieval,
+autonomous publication, supervisor delegation, external integrations, or advanced
+evaluation/tracing. Those safety, action, memory, and observability capabilities
+remain deferred to M5 or later. Manual review resolution from
+`MANUAL_REVIEW_REQUIRED` also remains a future explicit product flow.
