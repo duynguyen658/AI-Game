@@ -3,6 +3,9 @@ from fastapi.responses import JSONResponse
 
 from app.core.exceptions import (
     ApplicationError,
+    AgentRunNotFoundError,
+    AgentRunAlreadyActiveError,
+    AgentExecutionError,
     ApprovalAlreadyDecidedError,
     ApprovalNotAllowedError,
     AuthenticationError,
@@ -29,8 +32,10 @@ ERROR_STATUS_MAP: dict[type[ApplicationError], int] = {
     ApprovalNotAllowedError: status.HTTP_403_FORBIDDEN,
     CampaignNotFoundError: status.HTTP_404_NOT_FOUND,
     WorkflowNotFoundError: status.HTTP_404_NOT_FOUND,
+    AgentRunNotFoundError: status.HTTP_404_NOT_FOUND,
     CampaignAlreadyExistsError: status.HTTP_409_CONFLICT,
     WorkflowAlreadyActiveError: status.HTTP_409_CONFLICT,
+    AgentRunAlreadyActiveError: status.HTTP_409_CONFLICT,
     WorkflowCreationNotAllowedError: status.HTTP_409_CONFLICT,
     InvalidStateTransitionError: status.HTTP_409_CONFLICT,
     ApprovalAlreadyDecidedError: status.HTTP_409_CONFLICT,
@@ -42,6 +47,7 @@ ERROR_STATUS_MAP: dict[type[ApplicationError], int] = {
     LLMTimeoutError: status.HTTP_500_INTERNAL_SERVER_ERROR,
     WorkflowExecutionError: status.HTTP_500_INTERNAL_SERVER_ERROR,
     PersistenceError: status.HTTP_500_INTERNAL_SERVER_ERROR,
+    AgentExecutionError: status.HTTP_500_INTERNAL_SERVER_ERROR,
 }
 
 
@@ -59,7 +65,14 @@ async def application_error_handler(
                 }
             },
         )
-    status_code = ERROR_STATUS_MAP.get(type(exc), status.HTTP_400_BAD_REQUEST)
+    status_code = next(
+        (
+            mapped_status
+            for error_type, mapped_status in ERROR_STATUS_MAP.items()
+            if isinstance(exc, error_type)
+        ),
+        status.HTTP_400_BAD_REQUEST,
+    )
     return JSONResponse(
         status_code=status_code,
         content={

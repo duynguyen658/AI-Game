@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
@@ -9,10 +8,12 @@ import structlog
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agentic.runtime.orchestrator import AgenticOrchestrator
 from app.core.config import get_settings
 from app.core.constants import CampaignStatus, WorkflowStep
 from app.core.exceptions import (
     ApplicationError,
+    AgentExecutionError,
     ApprovalAlreadyDecidedError,
     ApprovalNotAllowedError,
     AuthenticationError,
@@ -30,6 +31,7 @@ from app.core.exceptions import (
     WorkflowNotFoundError,
 )
 from app.llm.base import LLMClient
+from app.core.sanitization import sanitize_text
 from app.repositories.campaign_repository import CampaignRepository
 from app.repositories.workflow_repository import WorkflowRepository
 from app.schemas.campaign import BriefAnalysis, GeneratedContent, QualityReview
@@ -53,29 +55,12 @@ CONFLICT_ERRORS = (
 )
 
 EXECUTION_FAILURE_ERRORS = (
+    AgentExecutionError,
     LLMProviderError,
     LLMResponseError,
     LLMTimeoutError,
     WorkflowExecutionError,
     WorkflowLimitError,
-)
-
-SECRET_REPLACEMENTS = (
-    (
-        re.compile(r"(postgresql\+asyncpg://)[^@\s]+@", re.IGNORECASE),
-        r"\1[REDACTED]@",
-    ),
-    (
-        re.compile(
-            r"(api[_-]?key|authorization|password|secret|token)=\S+",
-            re.IGNORECASE,
-        ),
-        r"\1=[REDACTED]",
-    ),
-    (
-        re.compile(r"Bearer\s+[A-Za-z0-9._-]+", re.IGNORECASE),
-        "Bearer [REDACTED]",
-    ),
 )
 
 
@@ -93,12 +78,14 @@ class CampaignWorkflow:
         self,
         session: AsyncSession,
         llm_client: LLMClient,
+        orchestrator: AgenticOrchestrator | None = None,
     ) -> None:
         self.session = session
         self.llm_client = llm_client
         self.settings = get_settings()
         self.campaign_repository = CampaignRepository(session)
         self.workflow_repository = WorkflowRepository(session)
+        self.orchestrator = orchestrator or AgenticOrchestrator(session, llm_client)
 
     async def run_to_pending_approval(self, workflow_id: UUID) -> WorkflowRun:
         try:
@@ -144,14 +131,9 @@ class CampaignWorkflow:
                     continue
 
                 if status == CampaignStatus.ANALYZING:
-                    await self._reserve_llm_call(
-                        workflow_id,
-                        expected_status=CampaignStatus.ANALYZING,
-                    )
-                    analysis = await self._generate(
-                        "Analyze the campaign brief into the requested structured schema.",
-                        snapshot.raw_brief or snapshot.campaign_objective,
-                        BriefAnalysis,
+                    analysis = await self.orchestrator.run_brief_analysis(
+                        campaign_id=snapshot.workflow.campaign_id,
+                        workflow_id=workflow_id,
                     )
                     await self._save_analysis_checkpoint(workflow_id, analysis)
                     continue
@@ -166,14 +148,9 @@ class CampaignWorkflow:
                             next_step=WorkflowStep.ANALYZE_BRIEF,
                         )
                         continue
-                    await self._reserve_llm_call(
-                        workflow_id,
-                        expected_status=CampaignStatus.GENERATING,
-                    )
-                    content = await self._generate(
-                        "Generate platform-specific campaign content.",
-                        str(analysis_payload),
-                        GeneratedContent,
+                    content = await self.orchestrator.run_content_generation(
+                        campaign_id=snapshot.workflow.campaign_id,
+                        workflow_id=workflow_id,
                     )
                     await self._save_content_checkpoint(workflow_id, content)
                     continue
@@ -188,14 +165,9 @@ class CampaignWorkflow:
                             next_step=WorkflowStep.GENERATE_CONTENT,
                         )
                         continue
-                    await self._reserve_llm_call(
-                        workflow_id,
-                        expected_status=CampaignStatus.REVIEWING,
-                    )
-                    review = await self._generate(
-                        "Review the generated content and return a quality review.",
-                        str(content_payload),
-                        QualityReview,
+                    review = await self.orchestrator.run_content_review(
+                        campaign_id=snapshot.workflow.campaign_id,
+                        workflow_id=workflow_id,
                     )
                     await self._save_review_decision_checkpoint(workflow_id, review)
                     continue
@@ -251,32 +223,6 @@ class CampaignWorkflow:
         await self.campaign_repository.update_status(campaign, next_status)
         await self.session.commit()
         return workflow_to_schema(workflow)
-
-    async def _reserve_llm_call(
-        self,
-        workflow_id: UUID,
-        *,
-        expected_status: CampaignStatus,
-    ) -> None:
-        workflow, _ = await self._load_locked_pair(workflow_id)
-        self._ensure_expected_status(workflow.status, expected_status)
-        if workflow.llm_call_count >= self.settings.max_llm_calls_per_workflow:
-            await self.session.rollback()
-            raise WorkflowLimitError("LLM call budget exhausted")
-        await self.workflow_repository.increment_llm_call_count(workflow)
-        await self.session.commit()
-
-    async def _generate(
-        self,
-        system_prompt: str,
-        user_prompt: str,
-        output_schema: type[BaseModel],
-    ) -> BaseModel:
-        return await self.llm_client.generate_structured(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            output_schema=output_schema,
-        )
 
     async def _save_analysis_checkpoint(
         self,
@@ -451,7 +397,4 @@ class CampaignWorkflow:
             )
 
     def _safe_error_message(self, message: str) -> str:
-        safe_message = message[:500]
-        for pattern, replacement in SECRET_REPLACEMENTS:
-            safe_message = pattern.sub(replacement, safe_message)
-        return safe_message
+        return sanitize_text(message, max_characters=500)

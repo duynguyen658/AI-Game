@@ -5,6 +5,7 @@ import structlog
 from fastapi import FastAPI
 
 from app.api.approvals import router as approvals_router
+from app.api.agent_runs import router as agent_runs_router
 from app.api.campaigns import router as campaigns_router
 from app.api.exception_handlers import register_exception_handlers
 from app.api.health import router as health_router
@@ -45,6 +46,7 @@ app.include_router(health_router)
 app.include_router(campaigns_router)
 app.include_router(workflows_router)
 app.include_router(approvals_router)
+app.include_router(agent_runs_router)
 
 
 @app.get("/")
