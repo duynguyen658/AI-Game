@@ -24,6 +24,17 @@ from app.core.exceptions import (
     WorkflowExecutionError,
     WorkflowLimitError,
     WorkflowNotFoundError,
+    ActionAlreadyDecidedError,
+    ActionApprovalRequiredError,
+    ActionExecutionConflictError,
+    ActionExpiredError,
+    ActionNotAllowedError,
+    ActionNotFoundError,
+    ActionRequestNotFoundError,
+    ActionVersionConflictError,
+    ControlledActionExecutionError,
+    MemoryEntryNotFoundError,
+    PolicyDeniedError,
 )
 
 ERROR_STATUS_MAP: dict[type[ApplicationError], int] = {
@@ -33,6 +44,9 @@ ERROR_STATUS_MAP: dict[type[ApplicationError], int] = {
     CampaignNotFoundError: status.HTTP_404_NOT_FOUND,
     WorkflowNotFoundError: status.HTTP_404_NOT_FOUND,
     AgentRunNotFoundError: status.HTTP_404_NOT_FOUND,
+    ActionRequestNotFoundError: status.HTTP_404_NOT_FOUND,
+    ActionNotFoundError: status.HTTP_404_NOT_FOUND,
+    MemoryEntryNotFoundError: status.HTTP_404_NOT_FOUND,
     CampaignAlreadyExistsError: status.HTTP_409_CONFLICT,
     WorkflowAlreadyActiveError: status.HTTP_409_CONFLICT,
     AgentRunAlreadyActiveError: status.HTTP_409_CONFLICT,
@@ -40,6 +54,13 @@ ERROR_STATUS_MAP: dict[type[ApplicationError], int] = {
     InvalidStateTransitionError: status.HTTP_409_CONFLICT,
     ApprovalAlreadyDecidedError: status.HTTP_409_CONFLICT,
     VersionConflictError: status.HTTP_409_CONFLICT,
+    ActionVersionConflictError: status.HTTP_409_CONFLICT,
+    ActionExecutionConflictError: status.HTTP_409_CONFLICT,
+    ActionAlreadyDecidedError: status.HTTP_409_CONFLICT,
+    ActionApprovalRequiredError: status.HTTP_409_CONFLICT,
+    ActionExpiredError: status.HTTP_410_GONE,
+    ActionNotAllowedError: status.HTTP_403_FORBIDDEN,
+    PolicyDeniedError: status.HTTP_403_FORBIDDEN,
     WorkflowLimitError: status.HTTP_409_CONFLICT,
     DatabaseUnavailableError: status.HTTP_503_SERVICE_UNAVAILABLE,
     LLMProviderError: status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -48,6 +69,7 @@ ERROR_STATUS_MAP: dict[type[ApplicationError], int] = {
     WorkflowExecutionError: status.HTTP_500_INTERNAL_SERVER_ERROR,
     PersistenceError: status.HTTP_500_INTERNAL_SERVER_ERROR,
     AgentExecutionError: status.HTTP_500_INTERNAL_SERVER_ERROR,
+    ControlledActionExecutionError: status.HTTP_500_INTERNAL_SERVER_ERROR,
 }
 
 

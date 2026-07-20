@@ -6,6 +6,8 @@ from fastapi import FastAPI
 
 from app.api.approvals import router as approvals_router
 from app.api.agent_runs import router as agent_runs_router
+from app.api.action_requests import router as action_requests_router
+from app.api.agent_memory import router as agent_memory_router
 from app.api.campaigns import router as campaigns_router
 from app.api.exception_handlers import register_exception_handlers
 from app.api.health import router as health_router
@@ -47,6 +49,8 @@ app.include_router(campaigns_router)
 app.include_router(workflows_router)
 app.include_router(approvals_router)
 app.include_router(agent_runs_router)
+app.include_router(action_requests_router)
+app.include_router(agent_memory_router)
 
 
 @app.get("/")

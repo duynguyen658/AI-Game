@@ -42,3 +42,35 @@ class AuthService:
     def require_agent_run_read(self, actor: AuthenticatedActor) -> None:
         if actor.role not in AGENT_RUN_VIEWER_ROLES:
             raise AuthorizationError("Actor is not allowed to view Agent run audits")
+
+    def require_action_read(self, actor: AuthenticatedActor) -> None:
+        if actor.role not in AGENT_RUN_VIEWER_ROLES:
+            raise AuthorizationError("Actor is not allowed to view action audits")
+
+    def require_action_approval(
+        self, actor: AuthenticatedActor, required_role: str | None, agent_name: str
+    ) -> None:
+        if actor.role == UserRole.SYSTEM or actor.actor_id == f"agent:{agent_name}":
+            raise AuthorizationError("Agents and SYSTEM cannot approve actions")
+        hierarchy = {
+            UserRole.REVIEWER: 1,
+            UserRole.MANAGER: 2,
+            UserRole.ADMIN: 3,
+        }
+        minimum = UserRole(required_role) if required_role else UserRole.ADMIN
+        if hierarchy.get(actor.role, 0) < hierarchy.get(minimum, 99):
+            raise AuthorizationError("Actor role cannot approve this action")
+
+    def require_action_execution(
+        self, actor: AuthenticatedActor, required_role: str | None
+    ) -> None:
+        if actor.role == UserRole.SYSTEM:
+            raise AuthorizationError("SYSTEM cannot execute approved human actions")
+        hierarchy = {
+            UserRole.REVIEWER: 1,
+            UserRole.MANAGER: 2,
+            UserRole.ADMIN: 3,
+        }
+        minimum = UserRole(required_role) if required_role else UserRole.ADMIN
+        if hierarchy.get(actor.role, 0) < hierarchy.get(minimum, 99):
+            raise AuthorizationError("Actor role cannot execute this action")
