@@ -94,6 +94,10 @@ class AgentExecutionError(ApplicationError):
     error_code = "AGENT_EXECUTION_ERROR"
 
 
+class AgentExecutionCancelledError(AgentExecutionError):
+    error_code = "AGENT_EXECUTION_CANCELLED"
+
+
 class AgentOutputValidationError(AgentExecutionError):
     error_code = "AGENT_OUTPUT_VALIDATION_ERROR"
 
@@ -128,6 +132,22 @@ class ToolInputValidationError(AgentExecutionError):
 
 class ToolExecutionError(AgentExecutionError):
     error_code = "TOOL_EXECUTION_ERROR"
+
+
+class ToolTimeoutError(ToolExecutionError):
+    error_code = "TOOL_TIMEOUT"
+
+
+class ToolCancelledError(ToolExecutionError):
+    error_code = "TOOL_CANCELLED"
+
+
+class InvalidAgentRunTransitionError(AgentExecutionError):
+    error_code = "INVALID_AGENT_RUN_TRANSITION"
+
+
+class InvalidToolCallTransitionError(AgentExecutionError):
+    error_code = "INVALID_TOOL_CALL_TRANSITION"
 
 
 class AgentContextError(AgentExecutionError):

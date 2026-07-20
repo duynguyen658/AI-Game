@@ -245,6 +245,11 @@ class AgentToolCallModel(Base):
             "duration_ms IS NULL OR duration_ms >= 0",
             name="ck_agent_tool_calls_duration_nonnegative",
         ),
+        CheckConstraint(
+            "(status IN ('COMPLETED', 'FAILED', 'REJECTED') AND completed_at IS NOT NULL) "
+            "OR (status IN ('REQUESTED', 'RUNNING') AND completed_at IS NULL)",
+            name="ck_agent_tool_calls_completed_at_consistency",
+        ),
         Index("ix_agent_tool_calls_run_started_at", "agent_run_id", "started_at"),
     )
 

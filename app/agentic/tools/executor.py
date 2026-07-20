@@ -14,9 +14,11 @@ from app.core.constants import AgentName, ToolCallStatus
 from app.core.exceptions import (
     ApplicationError,
     ToolExecutionError,
+    ToolCancelledError,
     ToolInputValidationError,
     ToolNotAllowedError,
     ToolNotFoundError,
+    ToolTimeoutError,
 )
 from app.core.sanitization import sanitize_json
 from app.llm.agent_turn import AgentToolRequest
@@ -68,7 +70,7 @@ class ToolExecutor:
                 async with asyncio.timeout(self.timeout_seconds):
                     raw_result = await definition.handler(context, validated_input)
             except TimeoutError as exc:
-                raise ToolExecutionError("Tool execution timed out") from exc
+                raise ToolTimeoutError("Tool execution timed out") from exc
             content, summary = self._bounded_result(raw_result)
             duration = int((time.monotonic() - started) * 1000)
             await self.run_service.finish_tool_call(
@@ -83,6 +85,17 @@ class ToolExecutor:
                 status=ToolCallStatus.COMPLETED,
                 content=content,
             )
+        except asyncio.CancelledError:
+            cancelled = ToolCancelledError("Tool execution was cancelled")
+            await asyncio.shield(
+                self.run_service.finish_tool_call(
+                    audit.tool_call_id,
+                    status=ToolCallStatus.FAILED,
+                    error=cancelled,
+                    duration_ms=int((time.monotonic() - started) * 1000),
+                )
+            )
+            raise
         except (
             ToolNotFoundError,
             ToolNotAllowedError,

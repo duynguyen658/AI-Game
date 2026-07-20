@@ -4,26 +4,18 @@ from app.agentic.tools.campaign_tools import campaign_tool_definitions
 from app.agentic.tools.definitions import ToolDefinition
 from app.core.constants import AgentName
 from app.core.exceptions import ToolNotAllowedError, ToolNotFoundError
+from app.service.agent_query_service import AgentReadQueryService
 
 DEFAULT_PERMISSIONS: dict[AgentName, frozenset[str]] = {
-    AgentName.BRIEF_ANALYST: frozenset(
-        {"get_campaign", "get_workflow", "get_previous_workflow_summary"}
-    ),
+    AgentName.BRIEF_ANALYST: frozenset({"get_previous_workflow_summary"}),
     AgentName.CONTENT_GENERATOR: frozenset(
         {
-            "get_campaign",
-            "get_workflow",
-            "get_brief_analysis",
             "get_previous_quality_review",
             "get_previous_revision",
         }
     ),
     AgentName.CONTENT_REVIEWER: frozenset(
         {
-            "get_campaign",
-            "get_workflow",
-            "get_brief_analysis",
-            "get_generated_content",
             "get_previous_quality_review",
         }
     ),
@@ -70,5 +62,5 @@ class ToolRegistry:
         ]
 
 
-def build_default_tool_registry() -> ToolRegistry:
-    return ToolRegistry(campaign_tool_definitions(), DEFAULT_PERMISSIONS)
+def build_default_tool_registry(query_service: AgentReadQueryService) -> ToolRegistry:
+    return ToolRegistry(campaign_tool_definitions(query_service), DEFAULT_PERMISSIONS)

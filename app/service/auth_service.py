@@ -4,7 +4,14 @@ from jose import JWTError, jwt  # type: ignore[import-untyped]
 
 from app.core.config import get_settings
 from app.core.constants import UserRole
-from app.core.exceptions import AuthenticationError
+from app.core.exceptions import AuthenticationError, AuthorizationError
+
+AGENT_RUN_VIEWER_ROLES = {
+    UserRole.REVIEWER,
+    UserRole.MANAGER,
+    UserRole.ADMIN,
+    UserRole.SYSTEM,
+}
 
 
 @dataclass(frozen=True)
@@ -31,3 +38,7 @@ class AuthService:
         if not subject or not role:
             raise AuthenticationError("Authentication token is missing required claims")
         return AuthenticatedActor(actor_id=str(subject), role=UserRole(role))
+
+    def require_agent_run_read(self, actor: AuthenticatedActor) -> None:
+        if actor.role not in AGENT_RUN_VIEWER_ROLES:
+            raise AuthorizationError("Actor is not allowed to view Agent run audits")

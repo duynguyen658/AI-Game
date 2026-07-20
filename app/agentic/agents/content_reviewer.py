@@ -8,10 +8,6 @@ class ContentReviewerAgent(BaseSpecialistAgent[QualityReview]):
     output_schema = QualityReview
     allowed_tool_names = frozenset(
         {
-            "get_campaign",
-            "get_workflow",
-            "get_brief_analysis",
-            "get_generated_content",
             "get_previous_quality_review",
         }
     )

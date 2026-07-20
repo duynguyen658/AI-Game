@@ -8,9 +8,6 @@ class ContentGeneratorAgent(BaseSpecialistAgent[GeneratedContent]):
     output_schema = GeneratedContent
     allowed_tool_names = frozenset(
         {
-            "get_campaign",
-            "get_workflow",
-            "get_brief_analysis",
             "get_previous_quality_review",
             "get_previous_revision",
         }
