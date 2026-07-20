@@ -154,8 +154,9 @@ class ActionRequestRepository:
                 version=AgentActionRequestModel.version + 1,
                 updated_at=now,
             )
+            .returning(AgentActionRequestModel.action_request_id)
         )
-        return bool(result.rowcount)
+        return result.scalar_one_or_none() is not None
 
     async def reject(
         self,
@@ -186,8 +187,9 @@ class ActionRequestRepository:
                 version=AgentActionRequestModel.version + 1,
                 updated_at=now,
             )
+            .returning(AgentActionRequestModel.action_request_id)
         )
-        return bool(result.rowcount)
+        return result.scalar_one_or_none() is not None
 
     async def expire(self, action_request_id: UUID, *, expected_version: int) -> bool:
         now = datetime.now(UTC)
@@ -204,8 +206,9 @@ class ActionRequestRepository:
                 version=AgentActionRequestModel.version + 1,
                 updated_at=now,
             )
+            .returning(AgentActionRequestModel.action_request_id)
         )
-        return bool(result.rowcount)
+        return result.scalar_one_or_none() is not None
 
     async def mark_executing(
         self, request: AgentActionRequestModel
