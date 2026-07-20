@@ -2,6 +2,7 @@ import pytest
 
 from app.agentic.runtime.execution_budget import AgentExecutionBudget, BudgetTracker
 from app.core.exceptions import (
+    AgentActionProposalLimitError,
     AgentIterationLimitError,
     AgentLLMCallLimitError,
     AgentToolCallLimitError,
@@ -20,6 +21,8 @@ def test_budget_enforces_each_counter() -> None:
         tracker.before_llm_call(2)
     with pytest.raises(AgentToolCallLimitError):
         tracker.before_tool_calls(2, 2)
+    with pytest.raises(AgentActionProposalLimitError):
+        tracker.before_action_proposals(3, 1)
 
 
 def test_budget_accepts_values_below_limits() -> None:
