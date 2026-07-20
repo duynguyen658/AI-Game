@@ -119,6 +119,7 @@ alembic upgrade head
 alembic current
 alembic history
 alembic downgrade -1
+alembic check
 ```
 
 Reset local database volume:
@@ -147,7 +148,10 @@ python -m pytest tests/integration -v
 ```
 
 CI sets `RUN_POSTGRES_TESTS=1`, starts PostgreSQL, applies Alembic migrations,
-and runs the full quality suite.
+runs an Alembic drift check, and executes the full quality suite. The PostgreSQL
+suite covers repository persistence, database constraints, workflow/service
+lifecycle behavior, approval conflicts, concurrency, API flows, and E2E approval,
+revision, retry, and failure scenarios.
 
 ## Security
 

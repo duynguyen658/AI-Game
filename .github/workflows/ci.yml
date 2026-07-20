@@ -48,6 +48,9 @@ jobs:
       - name: Run migrations
         run: alembic upgrade head
 
+      - name: Alembic drift check
+        run: alembic check
+
       - name: Ruff
         run: python -m ruff check app tests alembic
 
@@ -61,4 +64,7 @@ jobs:
         run: python -m bandit -r app
 
       - name: Pytest
-        run: python -m pytest -v --cov=app --cov-report=term-missing
+        run: python -m pytest -v
+
+      - name: Coverage
+        run: python -m pytest --cov=app --cov-report=term-missing
