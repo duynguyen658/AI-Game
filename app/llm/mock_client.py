@@ -7,6 +7,7 @@ from typing import Deque
 from pydantic import BaseModel
 
 from app.core.exceptions import LLMProviderError, LLMResponseError, LLMTimeoutError
+from app.llm.agent_turn import AgentMessage, AgentTurn
 from app.schemas.campaign import (
     BriefAnalysis,
     DiscordContent,
@@ -23,12 +24,14 @@ class MockLLMClient:
         self,
         scripted_failures: list[Exception] | None = None,
         scripted_outputs: list[BaseModel | Exception] | None = None,
+        scripted_turns: list[AgentTurn | Exception] | None = None,
     ) -> None:
         self.scripted_failures: Deque[Exception] = deque(scripted_failures or [])
         self.scripted_outputs: Deque[BaseModel | Exception] = deque(
             scripted_outputs or []
         )
         self.call_count = 0
+        self.scripted_turns: Deque[AgentTurn | Exception] = deque(scripted_turns or [])
 
     async def generate_structured(
         self,
@@ -99,6 +102,29 @@ class MockLLMClient:
                 requires_human_review=True,
             )
         raise LLMResponseError("Mock client has no response for requested schema")
+
+    async def run_agent_turn(
+        self,
+        *,
+        system_prompt: str,
+        messages: list[AgentMessage],
+        tools: list[dict[str, object]],
+        output_schema: type[BaseModel],
+    ) -> AgentTurn:
+        del system_prompt, messages, tools
+        await asyncio.sleep(0)
+        if self.scripted_turns:
+            self.call_count += 1
+            turn = self.scripted_turns.popleft()
+            if isinstance(turn, Exception):
+                raise turn
+            return turn
+        output = await self.generate_structured(
+            system_prompt="agent",
+            user_prompt="agent",
+            output_schema=output_schema,
+        )
+        return AgentTurn(final_output=output.model_dump(mode="json"))
 
 
 def mock_timeout() -> LLMTimeoutError:

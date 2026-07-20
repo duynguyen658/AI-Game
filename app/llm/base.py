@@ -1,6 +1,7 @@
-from typing import Protocol, TypeVar
+from typing import Any, Protocol, TypeVar
 
 from pydantic import BaseModel
+from app.llm.agent_turn import AgentMessage, AgentTurn
 
 OutputT = TypeVar("OutputT", bound=BaseModel)
 
@@ -13,3 +14,12 @@ class LLMClient(Protocol):
         user_prompt: str,
         output_schema: type[OutputT],
     ) -> OutputT: ...
+
+    async def run_agent_turn(
+        self,
+        *,
+        system_prompt: str,
+        messages: list[AgentMessage],
+        tools: list[dict[str, Any]],
+        output_schema: type[OutputT],
+    ) -> AgentTurn: ...
