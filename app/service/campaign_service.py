@@ -10,7 +10,7 @@ from app.core.exceptions import (
     CampaignValidationError,
 )
 from app.repositories.campaign_repository import CampaignRepository
-from app.schemas.campaign import CampaignCreate, CampaignRecord
+from app.schemas.campaign import CampaignCreate, CampaignMetadataUpdate, CampaignRecord
 from app.service.mappers import campaign_to_record
 
 
@@ -66,6 +66,18 @@ class CampaignService:
         if model is None:
             raise CampaignNotFoundError("Campaign not found")
         await self.repository.update_allowed_fields(model, payload)
+        await self.repository.increment_version(model)
+        await self.session.commit()
+        return campaign_to_record(model)
+
+    async def update_metadata(
+        self, campaign_id: str, payload: CampaignMetadataUpdate
+    ) -> CampaignRecord:
+        model = await self.repository.get_by_id_for_update(campaign_id)
+        if model is None:
+            await self.session.rollback()
+            raise CampaignNotFoundError("Campaign not found")
+        await self.repository.update_metadata(model, payload)
         await self.repository.increment_version(model)
         await self.session.commit()
         return campaign_to_record(model)

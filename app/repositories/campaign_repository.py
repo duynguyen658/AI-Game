@@ -12,6 +12,7 @@ from app.schemas.campaign import (
     CampaignCreate,
     GeneratedContent,
     QualityReview,
+    CampaignMetadataUpdate,
 )
 
 
@@ -135,6 +136,18 @@ class CampaignRepository:
         campaign.launch_date = payload.launch_date
         campaign.promotion = payload.promotion
         campaign.raw_brief = payload.raw_brief
+        await self.session.flush()
+        return campaign
+
+    async def update_metadata(
+        self, campaign: CampaignModel, payload: CampaignMetadataUpdate
+    ) -> CampaignModel:
+        if payload.tone is not None:
+            campaign.tone = payload.tone
+        if payload.target_audience is not None:
+            campaign.target_audience = payload.target_audience
+        if payload.promotion is not None:
+            campaign.promotion = payload.promotion
         await self.session.flush()
         return campaign
 

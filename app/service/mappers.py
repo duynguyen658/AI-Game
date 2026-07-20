@@ -8,12 +8,25 @@ from app.core.constants import (
     WorkflowStep,
 )
 from app.database.models import (
+    AgentActionExecutionModel,
+    AgentActionRequestModel,
+    AgentMemoryEntryModel,
     AgentRunModel,
     AgentToolCallModel,
     ApprovalRecordModel,
     CampaignModel,
     SecurityEventModel,
     WorkflowRunModel,
+)
+from app.schemas.action_execution import ActionExecutionRead
+from app.schemas.action_request import ActionRequestRead
+from app.schemas.memory_entry import MemoryEntryRead
+from app.core.constants import (
+    ActionExecutionStatus,
+    ActionRequestStatus,
+    MemoryEventType,
+    MemoryType,
+    PolicyDecision,
 )
 from app.core.constants import AgentName, AgentRunStatus, ToolCallStatus
 from app.schemas.agent_run import AgentRunRead
@@ -149,4 +162,70 @@ def tool_call_to_schema(model: AgentToolCallModel) -> ToolCallRead:
         started_at=model.started_at,
         completed_at=model.completed_at,
         duration_ms=model.duration_ms,
+    )
+
+
+def action_request_to_schema(model: AgentActionRequestModel) -> ActionRequestRead:
+    return ActionRequestRead(
+        action_request_id=model.action_request_id,
+        agent_run_id=model.agent_run_id,
+        workflow_id=model.workflow_id,
+        campaign_id=model.campaign_id,
+        agent_name=AgentName(model.agent_name),
+        action_name=model.action_name,
+        arguments=model.arguments,
+        rationale_summary=model.rationale_summary,
+        policy_decision=PolicyDecision(model.policy_decision),
+        policy_reason_code=model.policy_reason_code,
+        policy_reason=model.policy_reason,
+        required_role=UserRole(model.required_role) if model.required_role else None,
+        status=ActionRequestStatus(model.status),
+        requested_at=model.requested_at,
+        expires_at=model.expires_at,
+        approved_by=model.approved_by,
+        approved_at=model.approved_at,
+        rejected_by=model.rejected_by,
+        rejected_at=model.rejected_at,
+        rejection_reason=model.rejection_reason,
+        version=model.version,
+        idempotency_key=model.idempotency_key,
+        created_at=model.created_at,
+        updated_at=model.updated_at,
+    )
+
+
+def action_execution_to_schema(
+    model: AgentActionExecutionModel,
+) -> ActionExecutionRead:
+    return ActionExecutionRead(
+        action_execution_id=model.action_execution_id,
+        action_request_id=model.action_request_id,
+        status=ActionExecutionStatus(model.status),
+        attempt_number=model.attempt_number,
+        idempotency_key=model.idempotency_key,
+        started_at=model.started_at,
+        completed_at=model.completed_at,
+        duration_ms=model.duration_ms,
+        result_summary=model.result_summary,
+        error_code=model.error_code,
+        error_message=model.error_message,
+        created_at=model.created_at,
+        updated_at=model.updated_at,
+    )
+
+
+def memory_entry_to_schema(model: AgentMemoryEntryModel) -> MemoryEntryRead:
+    return MemoryEntryRead(
+        memory_entry_id=model.memory_entry_id,
+        campaign_id=model.campaign_id,
+        workflow_id=model.workflow_id,
+        agent_run_id=model.agent_run_id,
+        action_request_id=model.action_request_id,
+        memory_type=MemoryType(model.memory_type),
+        event_type=MemoryEventType(model.event_type),
+        summary=model.summary,
+        metadata=model.metadata_,
+        importance=model.importance,
+        created_at=model.created_at,
+        expires_at=model.expires_at,
     )
