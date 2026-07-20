@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.core.constants import (
     CAMPAIGN_ID_PATTERN,
@@ -102,6 +102,21 @@ class CampaignCreate(StrictSchema):
         if value == "":
             return None
         return value
+
+
+class CampaignMetadataUpdate(StrictSchema):
+    tone: str | None = Field(default=None, min_length=1, max_length=500)
+    target_audience: str | None = Field(default=None, min_length=1, max_length=300)
+    promotion: str | None = Field(default=None, min_length=1, max_length=1000)
+
+    @model_validator(mode="after")
+    def require_change(self) -> "CampaignMetadataUpdate":
+        if not any(
+            value is not None
+            for value in (self.tone, self.target_audience, self.promotion)
+        ):
+            raise ValueError("At least one metadata field is required")
+        return self
 
 
 class BriefAnalysis(StrictSchema):

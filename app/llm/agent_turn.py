@@ -4,6 +4,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.schemas.action_request import AgentActionProposal
+
 
 class AgentToolRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -34,6 +36,9 @@ class AgentTurn(BaseModel):
     assistant_text: str | None = Field(default=None, max_length=20_000)
     tool_calls: list[AgentToolRequest] = Field(default_factory=list, max_length=10)
     final_output: dict[str, Any] | None = None
+    action_proposals: list[AgentActionProposal] = Field(
+        default_factory=list, max_length=10
+    )
     usage: LLMUsage | None = None
 
     @model_validator(mode="after")

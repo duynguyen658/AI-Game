@@ -5,6 +5,7 @@ on:
     branches:
       - feature/repository-layer
       - agentic-core
+      - feature/m5-policy-memory-actions
   pull_request:
     branches:
       - main

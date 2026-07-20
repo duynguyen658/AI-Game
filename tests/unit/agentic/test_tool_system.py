@@ -3,9 +3,11 @@ from datetime import date
 from uuid import uuid4
 
 import pytest
+from pydantic import BaseModel
 
 from app.agentic.state.campaign_context import BriefAnalysisContext, CampaignContext
 from app.agentic.tools.executor import ToolExecutor
+from app.agentic.tools.memory_tools import MemoryToolInput, memory_tool_definitions
 from app.agentic.tools.campaign_tools import WorkflowToolInput
 from app.agentic.tools.definitions import ToolDefinition
 from app.agentic.tools.registry import ToolRegistry, build_default_tool_registry
@@ -50,6 +52,31 @@ class FakeQueryService:
         return {"available": False}
 
 
+class FakeMemoryItem(BaseModel):
+    summary: str
+
+
+class FakeMemoryService:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, int]] = []
+
+    async def recent_campaign(self, campaign_id: str, *, limit: int):
+        self.calls.append(("recent", campaign_id, limit))
+        return [FakeMemoryItem(summary="recent")]
+
+    async def previous_failures(self, campaign_id: str, *, limit: int):
+        self.calls.append(("failures", campaign_id, limit))
+        return [FakeMemoryItem(summary="failure")]
+
+    async def previous_review_feedback(self, campaign_id: str, *, limit: int):
+        self.calls.append(("feedback", campaign_id, limit))
+        return [FakeMemoryItem(summary="feedback")]
+
+    async def previous_action_results(self, campaign_id: str, *, limit: int):
+        self.calls.append(("actions", campaign_id, limit))
+        return [FakeMemoryItem(summary="action")]
+
+
 def context() -> BriefAnalysisContext:
     return BriefAnalysisContext(
         campaign_id="CL-TEST",
@@ -82,6 +109,34 @@ def test_registry_rejects_duplicates_and_restricts_agents() -> None:
     assert {item.name for item in registry.list_for_agent(AgentName.BRIEF_ANALYST)} == {
         "get_previous_workflow_summary",
     }
+
+
+@pytest.mark.asyncio
+async def test_memory_tools_use_bounded_memory_service_queries() -> None:
+    service = FakeMemoryService()
+    current = context()
+    payload = MemoryToolInput(
+        campaign_id=current.campaign_id,
+        workflow_id=current.workflow_id,
+        limit=4,
+    )
+    results = [
+        await definition.handler(current, payload)
+        for definition in memory_tool_definitions(service)  # type: ignore[arg-type]
+    ]
+
+    assert service.calls == [
+        ("recent", "CL-TEST", 4),
+        ("failures", "CL-TEST", 4),
+        ("feedback", "CL-TEST", 4),
+        ("actions", "CL-TEST", 4),
+    ]
+    assert results == [
+        [{"summary": "recent"}],
+        [{"summary": "failure"}],
+        [{"summary": "feedback"}],
+        [{"summary": "action"}],
+    ]
 
 
 @pytest.mark.asyncio

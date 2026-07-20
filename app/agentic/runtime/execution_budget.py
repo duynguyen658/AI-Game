@@ -9,6 +9,7 @@ from app.core.exceptions import (
     AgentLLMCallLimitError,
     AgentTimeoutError,
     AgentToolCallLimitError,
+    AgentActionProposalLimitError,
 )
 
 
@@ -19,6 +20,7 @@ class AgentExecutionBudget(BaseModel):
     max_llm_calls: int = Field(ge=1, le=20)
     max_tool_calls: int = Field(ge=0, le=50)
     timeout_seconds: int = Field(ge=1, le=300)
+    max_action_proposals: int = Field(default=3, ge=0, le=10)
 
 
 class BudgetTracker:
@@ -44,3 +46,10 @@ class BudgetTracker:
         self.check_timeout()
         if current + requested > self.budget.max_tool_calls:
             raise AgentToolCallLimitError("Agent tool call budget exhausted")
+
+    def before_action_proposals(self, current: int, requested: int) -> None:
+        self.check_timeout()
+        if current + requested > self.budget.max_action_proposals:
+            raise AgentActionProposalLimitError(
+                "Agent action proposal budget exhausted"
+            )

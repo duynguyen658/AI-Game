@@ -21,8 +21,12 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.constants import (
     ACTIVE_WORKFLOW_STATUS_VALUES,
+    ActionExecutionStatus,
+    ActionRequestStatus,
     AgentRunStatus,
     CampaignStatus,
+    MemoryRecordStatus,
+    MemoryType,
     WorkflowStep,
 )
 from app.database.base import Base, utc_now
@@ -84,6 +88,12 @@ class CampaignModel(Base):
         cascade="all, delete-orphan",
     )
     agent_runs: Mapped[list[AgentRunModel]] = relationship(back_populates="campaign")
+    action_requests: Mapped[list[AgentActionRequestModel]] = relationship(
+        back_populates="campaign"
+    )
+    memory_entries: Mapped[list[AgentMemoryEntryModel]] = relationship(
+        back_populates="campaign"
+    )
 
 
 class WorkflowRunModel(Base):
@@ -170,6 +180,12 @@ class WorkflowRunModel(Base):
     agent_runs: Mapped[list[AgentRunModel]] = relationship(
         back_populates="workflow_run"
     )
+    action_requests: Mapped[list[AgentActionRequestModel]] = relationship(
+        back_populates="workflow_run"
+    )
+    memory_entries: Mapped[list[AgentMemoryEntryModel]] = relationship(
+        back_populates="workflow_run"
+    )
 
 
 class AgentRunModel(Base):
@@ -236,6 +252,12 @@ class AgentRunModel(Base):
     tool_calls: Mapped[list[AgentToolCallModel]] = relationship(
         back_populates="agent_run"
     )
+    action_requests: Mapped[list[AgentActionRequestModel]] = relationship(
+        back_populates="agent_run"
+    )
+    memory_entries: Mapped[list[AgentMemoryEntryModel]] = relationship(
+        back_populates="agent_run"
+    )
 
 
 class AgentToolCallModel(Base):
@@ -276,6 +298,279 @@ class AgentToolCallModel(Base):
     duration_ms: Mapped[int | None] = mapped_column(Integer)
 
     agent_run: Mapped[AgentRunModel] = relationship(back_populates="tool_calls")
+
+
+class AgentActionRequestModel(Base):
+    __tablename__ = "agent_action_requests"
+    __table_args__ = (
+        CheckConstraint("version >= 1", name="ck_action_requests_version_positive"),
+        CheckConstraint(
+            "policy_decision <> 'FORBIDDEN' OR status = 'REJECTED'",
+            name="ck_action_requests_forbidden_rejected",
+        ),
+        CheckConstraint(
+            "status <> 'PENDING_APPROVAL' OR ((policy_decision = 'APPROVAL_REQUIRED' OR last_policy_decision = 'APPROVAL_REQUIRED') AND expires_at IS NOT NULL)",
+            name="ck_action_requests_pending_consistency",
+        ),
+        CheckConstraint(
+            "status <> 'APPROVED' OR (approved_by IS NOT NULL AND approved_at IS NOT NULL)",
+            name="ck_action_requests_approved_consistency",
+        ),
+        CheckConstraint(
+            "status <> 'REJECTED' OR rejected_at IS NOT NULL",
+            name="ck_action_requests_rejected_consistency",
+        ),
+        UniqueConstraint("idempotency_key", name="uq_action_requests_idempotency_key"),
+        Index(
+            "ix_action_requests_campaign_requested",
+            "campaign_id",
+            "requested_at",
+        ),
+        Index(
+            "ix_action_requests_workflow_requested",
+            "workflow_id",
+            "requested_at",
+        ),
+        Index(
+            "ix_action_requests_pending",
+            "status",
+            "expires_at",
+            postgresql_where=text("status = 'PENDING_APPROVAL'"),
+        ),
+    )
+
+    action_request_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    agent_run_id: Mapped[UUID] = mapped_column(
+        ForeignKey("agent_runs.agent_run_id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    workflow_id: Mapped[UUID] = mapped_column(
+        ForeignKey("workflow_runs.workflow_id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    campaign_id: Mapped[str] = mapped_column(
+        ForeignKey("campaigns.campaign_id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    agent_name: Mapped[str] = mapped_column(String(50), nullable=False)
+    action_name: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    arguments: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    rationale_summary: Mapped[str] = mapped_column(Text, nullable=False)
+    policy_decision: Mapped[str] = mapped_column(String(50), nullable=False)
+    policy_reason_code: Mapped[str] = mapped_column(String(100), nullable=False)
+    policy_reason: Mapped[str] = mapped_column(String(500), nullable=False)
+    required_role: Mapped[str | None] = mapped_column(String(50))
+    last_policy_decision: Mapped[str | None] = mapped_column(String(50))
+    last_policy_reason_code: Mapped[str | None] = mapped_column(String(100))
+    last_policy_reason: Mapped[str | None] = mapped_column(String(500))
+    last_required_role: Mapped[str | None] = mapped_column(String(50))
+    last_policy_campaign_status: Mapped[str | None] = mapped_column(String(50))
+    last_policy_workflow_status: Mapped[str | None] = mapped_column(String(50))
+    last_policy_revision_number: Mapped[int | None] = mapped_column(Integer)
+    last_policy_evaluated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    status: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        default=ActionRequestStatus.PROPOSED.value,
+        index=True,
+    )
+    requested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    approved_by: Mapped[str | None] = mapped_column(String(200))
+    approved_role: Mapped[str | None] = mapped_column(String(50))
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    rejected_by: Mapped[str | None] = mapped_column(String(200))
+    rejected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    rejection_reason: Mapped[str | None] = mapped_column(Text)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    idempotency_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
+    )
+
+    agent_run: Mapped[AgentRunModel] = relationship(back_populates="action_requests")
+    workflow_run: Mapped[WorkflowRunModel] = relationship(
+        back_populates="action_requests"
+    )
+    campaign: Mapped[CampaignModel] = relationship(back_populates="action_requests")
+    executions: Mapped[list[AgentActionExecutionModel]] = relationship(
+        back_populates="action_request"
+    )
+    memory_entries: Mapped[list[AgentMemoryEntryModel]] = relationship(
+        back_populates="action_request"
+    )
+
+
+class AgentActionExecutionModel(Base):
+    __tablename__ = "agent_action_executions"
+    __table_args__ = (
+        CheckConstraint(
+            "attempt_number >= 1", name="ck_action_executions_attempt_positive"
+        ),
+        CheckConstraint(
+            "duration_ms IS NULL OR duration_ms >= 0",
+            name="ck_action_executions_duration_nonnegative",
+        ),
+        CheckConstraint(
+            "memory_record_attempts >= 0",
+            name="ck_action_executions_memory_attempts_nonnegative",
+        ),
+        CheckConstraint(
+            "memory_record_status <> 'RECORDED' OR memory_recorded_at IS NOT NULL",
+            name="ck_action_executions_memory_recorded_at",
+        ),
+        CheckConstraint(
+            "(status = 'CREATED' AND started_at IS NULL AND completed_at IS NULL) OR "
+            "(status = 'RUNNING' AND started_at IS NOT NULL AND completed_at IS NULL) OR "
+            "(status IN ('COMPLETED', 'FAILED', 'CANCELLED') AND started_at IS NOT NULL AND completed_at IS NOT NULL)",
+            name="ck_action_executions_status_timestamps",
+        ),
+        UniqueConstraint(
+            "action_request_id", name="uq_action_executions_one_per_request"
+        ),
+        UniqueConstraint(
+            "idempotency_key", name="uq_action_executions_idempotency_key"
+        ),
+        Index(
+            "ix_action_executions_request_created",
+            "action_request_id",
+            "created_at",
+        ),
+    )
+
+    action_execution_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    action_request_id: Mapped[UUID] = mapped_column(
+        ForeignKey("agent_action_requests.action_request_id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    status: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        default=ActionExecutionStatus.CREATED.value,
+        index=True,
+    )
+    attempt_number: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    idempotency_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    duration_ms: Mapped[int | None] = mapped_column(Integer)
+    result_summary: Mapped[str | None] = mapped_column(Text)
+    error_code: Mapped[str | None] = mapped_column(String(100))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    reserved_campaign_status: Mapped[str | None] = mapped_column(String(50))
+    reserved_campaign_version: Mapped[int | None] = mapped_column(Integer)
+    reserved_workflow_status: Mapped[str | None] = mapped_column(String(50))
+    reserved_revision_number: Mapped[int | None] = mapped_column(Integer)
+    memory_record_status: Mapped[str] = mapped_column(
+        String(50), nullable=False, default=MemoryRecordStatus.NOT_REQUIRED.value
+    )
+    memory_record_attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+    memory_record_error_code: Mapped[str | None] = mapped_column(String(100))
+    memory_record_error_message: Mapped[str | None] = mapped_column(Text)
+    memory_recorded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
+    )
+
+    action_request: Mapped[AgentActionRequestModel] = relationship(
+        back_populates="executions"
+    )
+    memory_entries: Mapped[list[AgentMemoryEntryModel]] = relationship(
+        back_populates="action_execution"
+    )
+
+
+class AgentMemoryEntryModel(Base):
+    __tablename__ = "agent_memory_entries"
+    __table_args__ = (
+        CheckConstraint(
+            "importance >= 1 AND importance <= 5",
+            name="ck_memory_entries_importance_range",
+        ),
+        CheckConstraint(
+            "expires_at IS NULL OR expires_at > created_at",
+            name="ck_memory_entries_expiration_order",
+        ),
+        UniqueConstraint(
+            "action_execution_id",
+            "event_type",
+            name="uq_memory_entries_execution_event",
+        ),
+        Index("ix_memory_entries_campaign_created", "campaign_id", "created_at"),
+        Index("ix_memory_entries_workflow_created", "workflow_id", "created_at"),
+        Index("ix_memory_entries_event_created", "event_type", "created_at"),
+        Index("ix_memory_entries_importance_created", "importance", "created_at"),
+    )
+
+    memory_entry_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    campaign_id: Mapped[str] = mapped_column(
+        ForeignKey("campaigns.campaign_id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    workflow_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("workflow_runs.workflow_id", ondelete="RESTRICT"), index=True
+    )
+    agent_run_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("agent_runs.agent_run_id", ondelete="RESTRICT"), index=True
+    )
+    action_request_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("agent_action_requests.action_request_id", ondelete="RESTRICT"),
+        index=True,
+    )
+    action_execution_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("agent_action_executions.action_execution_id", ondelete="RESTRICT"),
+        index=True,
+    )
+    memory_type: Mapped[str] = mapped_column(
+        String(50), nullable=False, default=MemoryType.EPISODIC.value
+    )
+    event_type: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    metadata_: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, nullable=False, default=dict
+    )
+    importance: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    campaign: Mapped[CampaignModel] = relationship(back_populates="memory_entries")
+    workflow_run: Mapped[WorkflowRunModel | None] = relationship(
+        back_populates="memory_entries"
+    )
+    agent_run: Mapped[AgentRunModel | None] = relationship(
+        back_populates="memory_entries"
+    )
+    action_request: Mapped[AgentActionRequestModel | None] = relationship(
+        back_populates="memory_entries"
+    )
+    action_execution: Mapped[AgentActionExecutionModel | None] = relationship(
+        back_populates="memory_entries"
+    )
 
 
 class ApprovalRecordModel(Base):

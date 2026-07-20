@@ -10,6 +10,8 @@ class ContentGeneratorAgent(BaseSpecialistAgent[GeneratedContent]):
         {
             "get_previous_quality_review",
             "get_previous_revision",
+            "get_previous_review_feedback",
+            "get_previous_action_results",
         }
     )
     prompt_file = "content_generator.md"

@@ -2,21 +2,29 @@ from __future__ import annotations
 
 from app.agentic.tools.campaign_tools import campaign_tool_definitions
 from app.agentic.tools.definitions import ToolDefinition
+from app.agentic.tools.memory_tools import memory_tool_definitions
 from app.core.constants import AgentName
 from app.core.exceptions import ToolNotAllowedError, ToolNotFoundError
 from app.service.agent_query_service import AgentReadQueryService
+from app.service.memory_service import MemoryService
 
 DEFAULT_PERMISSIONS: dict[AgentName, frozenset[str]] = {
-    AgentName.BRIEF_ANALYST: frozenset({"get_previous_workflow_summary"}),
+    AgentName.BRIEF_ANALYST: frozenset(
+        {"get_previous_workflow_summary", "get_recent_campaign_memories"}
+    ),
     AgentName.CONTENT_GENERATOR: frozenset(
         {
             "get_previous_quality_review",
             "get_previous_revision",
+            "get_previous_review_feedback",
+            "get_previous_action_results",
         }
     ),
     AgentName.CONTENT_REVIEWER: frozenset(
         {
             "get_previous_quality_review",
+            "get_previous_review_feedback",
+            "get_previous_failures",
         }
     ),
 }
@@ -62,5 +70,27 @@ class ToolRegistry:
         ]
 
 
-def build_default_tool_registry(query_service: AgentReadQueryService) -> ToolRegistry:
-    return ToolRegistry(campaign_tool_definitions(query_service), DEFAULT_PERMISSIONS)
+def build_default_tool_registry(
+    query_service: AgentReadQueryService,
+    memory_service: MemoryService | None = None,
+) -> ToolRegistry:
+    definitions = campaign_tool_definitions(query_service)
+    permissions = DEFAULT_PERMISSIONS
+    if memory_service is not None:
+        definitions = [*definitions, *memory_tool_definitions(memory_service)]
+    else:
+        permissions = {
+            agent: frozenset(
+                name
+                for name in allowed
+                if not name.startswith("get_recent_")
+                and name
+                not in {
+                    "get_previous_failures",
+                    "get_previous_review_feedback",
+                    "get_previous_action_results",
+                }
+            )
+            for agent, allowed in DEFAULT_PERMISSIONS.items()
+        }
+    return ToolRegistry(definitions, permissions)

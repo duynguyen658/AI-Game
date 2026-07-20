@@ -4,7 +4,12 @@ import structlog
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.constants import ApprovalDecision, CampaignStatus, UserRole
+from app.core.constants import (
+    ApprovalDecision,
+    CampaignStatus,
+    MemoryEventType,
+    UserRole,
+)
 from app.core.exceptions import (
     ApprovalAlreadyDecidedError,
     ApprovalNotAllowedError,
@@ -19,6 +24,7 @@ from app.repositories.campaign_repository import CampaignRepository
 from app.repositories.workflow_repository import WorkflowRepository
 from app.schemas.approval import ApprovalRecord, ApprovalRequest
 from app.service.mappers import approval_to_schema
+from app.service.memory_service import MemoryService
 from app.workflows.workflow_state import ensure_valid_transition
 
 APPROVER_ROLES = {UserRole.REVIEWER, UserRole.MANAGER, UserRole.ADMIN}
@@ -31,6 +37,7 @@ class ApprovalService:
         self.campaign_repository = CampaignRepository(session)
         self.workflow_repository = WorkflowRepository(session)
         self.approval_repository = ApprovalRepository(session)
+        self.memory_service = MemoryService(session)
 
     async def decide(
         self,
@@ -109,4 +116,17 @@ class ApprovalService:
                     "Workflow already has an approval decision"
                 ) from exc
             raise PersistenceError("Approval decision could not be persisted") from exc
-        return approval_to_schema(record)
+        result = approval_to_schema(record)
+        await self.memory_service.record_event(
+            campaign_id=request.campaign_id,
+            workflow_id=request.workflow_id,
+            event_type=MemoryEventType.CAMPAIGN_APPROVAL_DECIDED,
+            summary=f"Campaign approval decision: {request.decision.value}",
+            metadata={
+                "decision": request.decision.value,
+                "actor_role": actor_role.value,
+                "resulting_version": resulting_version,
+            },
+            importance=5,
+        )
+        return result

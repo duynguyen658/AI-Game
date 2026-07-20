@@ -2,7 +2,8 @@
 
 Production-oriented FastAPI backend with a deterministic campaign workflow and a
 bounded, observable Agentic Core. The application remains authoritative for workflow
-state, retries, approval decisions, persistence, authorization, and audit history.
+state, retries, policy and approval decisions, persistence, authorization, and audit
+history.
 
 ## Architecture
 
@@ -13,7 +14,9 @@ FastAPI Router
 -> Agentic Orchestrator
 -> Specialist Agent
 -> Bounded Agent Loop
--> Read-only Tools
+-> Read-only Tools or Typed Action Proposal
+-> Deterministic Policy Engine
+-> Controlled Action Executor
 -> Application Service
 -> Repository
 -> PostgreSQL
@@ -84,6 +87,14 @@ Useful endpoints:
 - `GET /agent-runs/{agent_run_id}/tool-calls`
 - `GET /workflows/{workflow_id}/agent-runs`
 - `GET /campaigns/{campaign_id}/agent-runs`
+- `GET /action-requests`
+- `GET /action-requests/{action_request_id}`
+- `GET /action-requests/{action_request_id}/executions`
+- `POST /action-requests/{action_request_id}/approve`
+- `POST /action-requests/{action_request_id}/reject`
+- `POST /action-requests/{action_request_id}/execute`
+- `GET /campaigns/{campaign_id}/memories`
+- `GET /workflows/{workflow_id}/memories`
 
 ## Workflow Behavior
 
@@ -163,6 +174,98 @@ The audit API returns identifiers, lifecycle status, counters, timestamps, sanit
 bounded tool arguments/results, and stable safe error fields. It never returns raw
 prompts, hidden reasoning, credentials, provider payloads, or raw database details.
 
+## Policy and Controlled Actions
+
+M5 keeps authority outside the Agent runtime:
+
+```text
+Agent Proposal
+-> Deterministic Policy Engine
+-> Action Request
+-> Human Approval when required
+-> Controlled Action Executor
+-> Execution Audit
+-> Structured Memory
+```
+
+The policy engine is deterministic and side-effect free. It validates the action
+name, Agent allowlist, typed arguments, campaign/workflow state, revision scope, and
+risk definition in a fixed order. Unknown, generic, aliased, nested, or unregistered
+operations are denied by default. It never uses an LLM, database write, or network
+call to classify an action.
+
+`SAFE` actions are bounded, reversible internal operations and execute automatically.
+`APPROVAL_REQUIRED` actions remain pending until an authorized human approves them.
+`FORBIDDEN` proposals are rejected and audited without a handler. The initial action
+set is intentionally small: internal recommendations, summaries, revision drafts,
+selected metadata updates, regeneration requests, review notes, and manual-review
+transitions. State-changing handlers use existing application and workflow services.
+
+Action requests use `version` for optimistic locking. Approval, rejection, expiration,
+and execution races have one committed winner; stale operations receive stable
+conflicts. A deterministic idempotency key is derived from campaign, workflow,
+revision, action name, and normalized arguments. PostgreSQL uniqueness and executor
+reservation ensure one request and one side effect. Sensitive approvals expire after
+the configured TTL. Request and execution rows preserve policy, human decision,
+terminal status, duration, and sanitized result/error summaries.
+
+The proposal-time policy result is historical audit evidence, not permanent
+authorization. Immediately before every side effect, the executor reloads and locks
+the current campaign, workflow, and action request in this order:
+
+```text
+Campaign -> Workflow -> ActionRequest -> ActionExecution
+```
+
+The executor re-evaluates policy and reserves the execution in the same short
+transaction, then releases all locks before calling the handler. The reservation
+stores expected campaign status/version and workflow status/revision. Handlers lock
+the campaign and workflow in the same order and reject the mutation with a stable
+`ACTION_STATE_CHANGED` conflict if the expected state no longer matches. This closes
+the policy check/use gap without holding database locks during handler execution.
+
+Human approval does not bypass fresh policy evaluation. An approved action may still
+be denied if campaign or workflow state changed. If a `SAFE` action now requires
+approval, automatic execution stops; if the required role becomes stronger, the old
+approval is insufficient. The original policy fields remain unchanged while explicit
+`last_policy_*` fields expose the latest pre-execution decision safely.
+
+Request, execution, and memory persistence inspect PostgreSQL constraint names and
+map only known uniqueness constraints to idempotent/domain conflicts. Foreign-key,
+check, null, unknown, or missing constraint diagnostics become a safe
+`PERSISTENCE_ERROR`; raw SQL and PostgreSQL messages are not returned by the API.
+
+Agents do not approve their own actions. Agents do not approve campaigns. Agents do
+not publish campaigns. `SYSTEM` does not impersonate human action approval. M5 actions
+are internal only, and no action can execute arbitrary SQL, shell commands, URLs, or
+policy changes.
+
+## Memory
+
+Working memory is bounded in `AgentState` and stores only truncated operational
+messages, tool results, policy decisions, and action result summaries for the current
+run. Episodic and operational memory is stored in PostgreSQL as typed events scoped to
+campaign, workflow, Agent run, and optional action request.
+
+`MemoryService` validates scope, removes secret-like keys and values, bounds metadata
+and summaries, applies expiration, and returns deterministic recent-first results.
+Read-only memory tools retrieve recent campaign events, failures, review feedback, and
+action results through the service layer. The authenticated memory APIs support
+bounded pagination and event filters. There is no user-facing memory write endpoint,
+hidden reasoning persistence, vector database, embedding, or semantic retrieval.
+
+Terminal action state and memory recording are separate, observable audit steps. A
+successful handler first commits the action request/execution as completed with
+memory status `PENDING`, then records one memory event identified by
+`action_execution_id + event_type`. PostgreSQL prevents duplicate source events.
+Memory success changes the status to `RECORDED`; a memory failure changes it to
+`FAILED` while preserving the completed action and a sanitized retryable error.
+
+Action success is not reversed solely because memory recording failed. Memory
+reconciliation never re-executes the action handler. Operators or tests can call
+`ActionService.reconcile_pending_action_memories(limit=100)` manually; repeated calls
+are idempotent and repair only `PENDING` or `FAILED` memory audit records.
+
 ## Database
 
 The app uses async SQLAlchemy with `postgresql+asyncpg`.
@@ -203,7 +306,7 @@ set RUN_POSTGRES_TESTS=1
 python -m pytest tests/integration -v
 ```
 
-Run the complete deterministic M4 suite and coverage report with:
+Run the complete deterministic M3/M4/M5 suite and coverage report with:
 
 ```bash
 set RUN_POSTGRES_TESTS=1
@@ -215,8 +318,10 @@ python -m pytest --cov=app --cov-report=term-missing
 CI sets `RUN_POSTGRES_TESTS=1`, starts PostgreSQL, applies Alembic migrations,
 runs an Alembic drift check, and executes the full quality suite. The PostgreSQL
 suite covers repository persistence, database constraints, workflow/service
-lifecycle behavior, approval conflicts, concurrency, API flows, and E2E approval,
-revision, retry, and failure scenarios.
+lifecycle behavior, campaign and action approval conflicts, controlled-action
+concurrency, stale policy/approval races, expected-state handlers, constraint-specific
+error mapping, memory failure/reconciliation, API flows, and E2E approval, revision,
+retry, failure, and Agent proposal scenarios.
 
 ## Security
 
@@ -224,13 +329,12 @@ Production rejects unsafe `change-me` secrets. The mock LLM provider requires no
 key and is the default for tests. Real OpenAI usage requires `LLM_PROVIDER=openai`,
 `LLM_API_KEY`, and `LLM_MODEL`.
 
-## Current Limitations and M5
+## Current Limitations and M6
 
-M4 keeps execution synchronous and has no long-term, episodic, or semantic memory.
-M4 tools are read-only. Agents do not approve campaigns. Agents do not publish
-campaigns. Agents do not directly change workflow state. It does not include queues,
-controlled write actions, a policy engine, action approval, vector retrieval,
-autonomous publication, supervisor delegation, external integrations, or advanced
-evaluation/tracing. Those safety, action, memory, and observability capabilities
-remain deferred to M5 or later. Manual review resolution from
+M5 execution remains synchronous. Policy decisions are deterministic, Agents do not
+approve their own actions or campaigns, and Agents do not publish campaigns. M5 has
+no vector database and no external publishing. Frontend approval UI, distributed
+workers and queues, semantic/vector memory, external publishing integrations,
+OpenTelemetry, Prometheus/Grafana, production alerts, evaluation frameworks, and cost
+or quality dashboards remain deferred to M6 or later. Manual review resolution from
 `MANUAL_REVIEW_REQUIRED` also remains a future explicit product flow.

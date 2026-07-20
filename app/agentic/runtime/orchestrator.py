@@ -4,6 +4,7 @@ import asyncio
 from typing import TypeVar
 from uuid import UUID
 
+import structlog
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,7 +20,7 @@ from app.agentic.state.campaign_context import CampaignContext
 from app.agentic.tools.executor import ToolExecutor
 from app.agentic.tools.registry import build_default_tool_registry
 from app.core.config import Settings, get_settings
-from app.core.constants import AgentRunStatus
+from app.core.constants import AgentRunStatus, MemoryEventType
 from app.core.exceptions import (
     AgentExecutionError,
     AgentExecutionCancelledError,
@@ -27,6 +28,7 @@ from app.core.exceptions import (
     AgentLLMCallLimitError,
     AgentTimeoutError,
     AgentToolCallLimitError,
+    AgentActionProposalLimitError,
     ApplicationError,
 )
 from app.llm.base import LLMClient
@@ -35,13 +37,17 @@ from app.schemas.campaign import BriefAnalysis, GeneratedContent, QualityReview
 from app.service.agent_run_service import AgentRunService
 from app.service.agent_query_service import AgentReadQueryService
 from app.service.workflow_service import WorkflowService
+from app.service.action_service import ActionService
+from app.service.memory_service import MemoryService
 
 OutputT = TypeVar("OutputT", bound=BaseModel)
+logger = structlog.get_logger()
 LIMIT_ERRORS = (
     AgentIterationLimitError,
     AgentLLMCallLimitError,
     AgentToolCallLimitError,
     AgentTimeoutError,
+    AgentActionProposalLimitError,
 )
 
 
@@ -59,12 +65,17 @@ class AgenticOrchestrator:
         self.context_builder = AgentContextBuilder(session)
         self.run_service = AgentRunService(session)
         self.workflow_service = WorkflowService(session)
-        self.registry = build_default_tool_registry(AgentReadQueryService(session))
+        self.memory_service = MemoryService(session, settings=self.settings)
+        self.action_service = ActionService(session, settings=self.settings)
+        self.registry = build_default_tool_registry(
+            AgentReadQueryService(session), self.memory_service
+        )
         self.budget = AgentExecutionBudget(
             max_iterations=self.settings.agent_max_iterations,
             max_llm_calls=self.settings.agent_max_llm_calls,
             max_tool_calls=self.settings.agent_max_tool_calls,
             timeout_seconds=self.settings.agent_timeout_seconds,
+            max_action_proposals=self.settings.agent_max_action_proposals,
         )
 
     async def run_brief_analysis(
@@ -126,6 +137,11 @@ class AgenticOrchestrator:
             reserve_workflow_llm_call=lambda: self.workflow_service.record_llm_call(
                 context.workflow_id
             ),
+            process_action_proposal=lambda proposal: self.action_service.propose(
+                agent_run_id=run.agent_run_id,
+                agent_name=agent.name,
+                proposal=proposal,
+            ),
         )
         try:
             output = await loop.run(
@@ -135,10 +151,14 @@ class AgenticOrchestrator:
             return output
         except asyncio.CancelledError:
             cancelled = AgentExecutionCancelledError("Agent execution was cancelled")
-            await asyncio.shield(self.run_service.fail_run(run.agent_run_id, cancelled))
+            await asyncio.shield(
+                self._record_agent_failure(
+                    run.agent_run_id, context, cancelled, limit=False
+                )
+            )
             raise
         except LIMIT_ERRORS as exc:
-            await self.run_service.fail_run(run.agent_run_id, exc, limit=True)
+            await self._record_agent_failure(run.agent_run_id, context, exc, limit=True)
             raise
         except Exception as exc:
             wrapped = (
@@ -146,7 +166,35 @@ class AgenticOrchestrator:
                 if isinstance(exc, ApplicationError)
                 else AgentExecutionError("Agent specialist execution failed")
             )
-            await self.run_service.fail_run(run.agent_run_id, wrapped)
+            await self._record_agent_failure(
+                run.agent_run_id, context, wrapped, limit=False
+            )
             if wrapped is exc:
                 raise
             raise wrapped from exc
+
+    async def _record_agent_failure(
+        self,
+        agent_run_id: UUID,
+        context: CampaignContext,
+        error: ApplicationError,
+        *,
+        limit: bool,
+    ) -> None:
+        await self.run_service.fail_run(agent_run_id, error, limit=limit)
+        try:
+            await self.memory_service.record_event(
+                campaign_id=context.campaign_id,
+                workflow_id=context.workflow_id,
+                agent_run_id=agent_run_id,
+                event_type=MemoryEventType.AGENT_FAILED,
+                summary=error.message,
+                metadata={"error_code": error.error_code},
+                importance=5,
+            )
+        except Exception:
+            await self.session.rollback()
+            logger.exception(
+                "agent_failure_memory_record_failed",
+                agent_run_id=str(agent_run_id),
+            )

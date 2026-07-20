@@ -21,6 +21,7 @@ from app.core.exceptions import (
 from app.llm.agent_turn import AgentMessage
 from app.llm.base import LLMClient
 from app.service.agent_run_service import AgentRunService
+from app.schemas.action_request import ActionProposalResult, AgentActionProposal
 
 OutputT = TypeVar("OutputT", bound=BaseModel)
 
@@ -34,12 +35,17 @@ class AgentLoop:
         executor: ToolExecutor,
         run_service: AgentRunService,
         reserve_workflow_llm_call: Callable[[], Awaitable[None]],
+        process_action_proposal: Callable[
+            [AgentActionProposal], Awaitable[ActionProposalResult]
+        ]
+        | None = None,
     ) -> None:
         self.llm_client = llm_client
         self.registry = registry
         self.executor = executor
         self.run_service = run_service
         self.reserve_workflow_llm_call = reserve_workflow_llm_call
+        self.process_action_proposal = process_action_proposal
 
     async def run(
         self,
@@ -91,6 +97,23 @@ class AgentLoop:
                         "Agent final output is invalid"
                     ) from exc
                 state.final_output = output.model_dump(mode="json")
+                tracker.before_action_proposals(
+                    state.action_proposal_count, len(turn.action_proposals)
+                )
+                for proposal in turn.action_proposals:
+                    if self.process_action_proposal is None:
+                        raise AgentOutputValidationError(
+                            "Agent action proposal processing is unavailable"
+                        )
+                    proposal_result = await self.process_action_proposal(proposal)
+                    state.action_proposal_count += 1
+                    state.working_memory.add(
+                        "action_result",
+                        (
+                            f"{proposal_result.action_request.action_name}: "
+                            f"{proposal_result.action_request.status.value}"
+                        ),
+                    )
                 return output
 
             tracker.before_tool_calls(state.tool_call_count, len(turn.tool_calls))
@@ -102,14 +125,14 @@ class AgentLoop:
                 )
             )
             for request in turn.tool_calls:
-                result = await self.executor.execute(
+                tool_result = await self.executor.execute(
                     agent_run_id=state.agent_run_id,
                     agent_name=agent.name,
                     request=request,
                     context=context,
                 )
                 state.tool_call_count += 1
-                content = json.dumps(result.content, ensure_ascii=True)
+                content = json.dumps(tool_result.content, ensure_ascii=True)
                 state.messages.append(
                     AgentMessage(
                         role="tool",

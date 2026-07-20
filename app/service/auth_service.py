@@ -12,6 +12,26 @@ AGENT_RUN_VIEWER_ROLES = {
     UserRole.ADMIN,
     UserRole.SYSTEM,
 }
+ACTION_ROLE_LEVELS = {
+    UserRole.REVIEWER: 1,
+    UserRole.MANAGER: 2,
+    UserRole.ADMIN: 3,
+}
+
+
+def role_satisfies_requirement(
+    actual_role: str | UserRole | None,
+    required_role: UserRole | None,
+) -> bool:
+    if actual_role is None or required_role is None:
+        return required_role is None
+    try:
+        actual = UserRole(actual_role)
+    except ValueError:
+        return False
+    return ACTION_ROLE_LEVELS.get(actual, 0) >= ACTION_ROLE_LEVELS.get(
+        required_role, 99
+    )
 
 
 @dataclass(frozen=True)
@@ -42,3 +62,25 @@ class AuthService:
     def require_agent_run_read(self, actor: AuthenticatedActor) -> None:
         if actor.role not in AGENT_RUN_VIEWER_ROLES:
             raise AuthorizationError("Actor is not allowed to view Agent run audits")
+
+    def require_action_read(self, actor: AuthenticatedActor) -> None:
+        if actor.role not in AGENT_RUN_VIEWER_ROLES:
+            raise AuthorizationError("Actor is not allowed to view action audits")
+
+    def require_action_approval(
+        self, actor: AuthenticatedActor, required_role: str | None, agent_name: str
+    ) -> None:
+        if actor.role == UserRole.SYSTEM or actor.actor_id == f"agent:{agent_name}":
+            raise AuthorizationError("Agents and SYSTEM cannot approve actions")
+        minimum = UserRole(required_role) if required_role else UserRole.ADMIN
+        if not role_satisfies_requirement(actor.role, minimum):
+            raise AuthorizationError("Actor role cannot approve this action")
+
+    def require_action_execution(
+        self, actor: AuthenticatedActor, required_role: str | None
+    ) -> None:
+        if actor.role == UserRole.SYSTEM:
+            raise AuthorizationError("SYSTEM cannot execute approved human actions")
+        minimum = UserRole(required_role) if required_role else UserRole.ADMIN
+        if not role_satisfies_requirement(actor.role, minimum):
+            raise AuthorizationError("Actor role cannot execute this action")

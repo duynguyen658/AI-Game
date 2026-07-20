@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agentic.runtime.orchestrator import AgenticOrchestrator
 from app.core.config import get_settings
-from app.core.constants import CampaignStatus, WorkflowStep
+from app.core.constants import CampaignStatus, MemoryEventType, WorkflowStep
 from app.core.exceptions import (
     ApplicationError,
     AgentExecutionError,
@@ -37,6 +37,7 @@ from app.repositories.workflow_repository import WorkflowRepository
 from app.schemas.campaign import BriefAnalysis, GeneratedContent, QualityReview
 from app.schemas.workflow_run import WorkflowRun
 from app.service.mappers import workflow_to_schema
+from app.service.memory_service import MemoryService
 from app.workflows.workflow_state import can_transition, ensure_valid_transition
 
 logger = structlog.get_logger()
@@ -86,6 +87,7 @@ class CampaignWorkflow:
         self.campaign_repository = CampaignRepository(session)
         self.workflow_repository = WorkflowRepository(session)
         self.orchestrator = orchestrator or AgenticOrchestrator(session, llm_client)
+        self.memory_service = MemoryService(session)
 
     async def run_to_pending_approval(self, workflow_id: UUID) -> WorkflowRun:
         try:
@@ -275,8 +277,11 @@ class CampaignWorkflow:
             workflow,
             quality_review.quality_score,
         )
+        workflow_retry = False
+        revision_completed = False
 
         if quality_review.status == "PASS":
+            revision_completed = workflow.revision_number > 0
             await self._transition_locked(
                 workflow,
                 campaign,
@@ -298,6 +303,7 @@ class CampaignWorkflow:
                 WorkflowStep.HUMAN_REVIEW,
             )
         else:
+            workflow_retry = True
             await self.workflow_repository.increment_retry_count(workflow)
             await self.campaign_repository.increment_retry_count(campaign)
             await self._transition_locked(
@@ -307,6 +313,45 @@ class CampaignWorkflow:
                 WorkflowStep.GENERATE_CONTENT,
             )
         await self.session.commit()
+        await self.memory_service.record_event(
+            campaign_id=campaign.campaign_id,
+            workflow_id=workflow.workflow_id,
+            event_type=MemoryEventType.REVIEW_FEEDBACK,
+            summary=(
+                "; ".join(quality_review.issues or quality_review.suggestions)
+                or f"Review completed with status {quality_review.status}"
+            ),
+            metadata={
+                "status": quality_review.status,
+                "quality_score": quality_review.quality_score,
+                "retry_count": workflow.retry_count,
+            },
+            importance=4,
+        )
+        if workflow_retry:
+            await self.memory_service.record_event(
+                campaign_id=campaign.campaign_id,
+                workflow_id=workflow.workflow_id,
+                event_type=MemoryEventType.WORKFLOW_RETRY,
+                summary=(
+                    "; ".join(quality_review.issues or quality_review.suggestions)
+                    or "Review requested bounded content regeneration"
+                ),
+                metadata={"retry_count": workflow.retry_count},
+                importance=4,
+            )
+        if revision_completed:
+            await self.memory_service.record_event(
+                campaign_id=campaign.campaign_id,
+                workflow_id=workflow.workflow_id,
+                event_type=MemoryEventType.REVISION_COMPLETED,
+                summary="Revised campaign content passed review",
+                metadata={
+                    "revision_number": workflow.revision_number,
+                    "quality_score": quality_review.quality_score,
+                },
+                importance=5,
+            )
 
     async def _transition_locked(
         self,
