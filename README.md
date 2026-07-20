@@ -209,6 +209,32 @@ reservation ensure one request and one side effect. Sensitive approvals expire a
 the configured TTL. Request and execution rows preserve policy, human decision,
 terminal status, duration, and sanitized result/error summaries.
 
+The proposal-time policy result is historical audit evidence, not permanent
+authorization. Immediately before every side effect, the executor reloads and locks
+the current campaign, workflow, and action request in this order:
+
+```text
+Campaign -> Workflow -> ActionRequest -> ActionExecution
+```
+
+The executor re-evaluates policy and reserves the execution in the same short
+transaction, then releases all locks before calling the handler. The reservation
+stores expected campaign status/version and workflow status/revision. Handlers lock
+the campaign and workflow in the same order and reject the mutation with a stable
+`ACTION_STATE_CHANGED` conflict if the expected state no longer matches. This closes
+the policy check/use gap without holding database locks during handler execution.
+
+Human approval does not bypass fresh policy evaluation. An approved action may still
+be denied if campaign or workflow state changed. If a `SAFE` action now requires
+approval, automatic execution stops; if the required role becomes stronger, the old
+approval is insufficient. The original policy fields remain unchanged while explicit
+`last_policy_*` fields expose the latest pre-execution decision safely.
+
+Request, execution, and memory persistence inspect PostgreSQL constraint names and
+map only known uniqueness constraints to idempotent/domain conflicts. Foreign-key,
+check, null, unknown, or missing constraint diagnostics become a safe
+`PERSISTENCE_ERROR`; raw SQL and PostgreSQL messages are not returned by the API.
+
 Agents do not approve their own actions. Agents do not approve campaigns. Agents do
 not publish campaigns. `SYSTEM` does not impersonate human action approval. M5 actions
 are internal only, and no action can execute arbitrary SQL, shell commands, URLs, or
@@ -227,6 +253,18 @@ Read-only memory tools retrieve recent campaign events, failures, review feedbac
 action results through the service layer. The authenticated memory APIs support
 bounded pagination and event filters. There is no user-facing memory write endpoint,
 hidden reasoning persistence, vector database, embedding, or semantic retrieval.
+
+Terminal action state and memory recording are separate, observable audit steps. A
+successful handler first commits the action request/execution as completed with
+memory status `PENDING`, then records one memory event identified by
+`action_execution_id + event_type`. PostgreSQL prevents duplicate source events.
+Memory success changes the status to `RECORDED`; a memory failure changes it to
+`FAILED` while preserving the completed action and a sanitized retryable error.
+
+Action success is not reversed solely because memory recording failed. Memory
+reconciliation never re-executes the action handler. Operators or tests can call
+`ActionService.reconcile_pending_action_memories(limit=100)` manually; repeated calls
+are idempotent and repair only `PENDING` or `FAILED` memory audit records.
 
 ## Database
 
@@ -281,8 +319,9 @@ CI sets `RUN_POSTGRES_TESTS=1`, starts PostgreSQL, applies Alembic migrations,
 runs an Alembic drift check, and executes the full quality suite. The PostgreSQL
 suite covers repository persistence, database constraints, workflow/service
 lifecycle behavior, campaign and action approval conflicts, controlled-action
-concurrency, policy and memory behavior, API flows, and E2E approval, revision, retry,
-failure, and Agent proposal scenarios.
+concurrency, stale policy/approval races, expected-state handlers, constraint-specific
+error mapping, memory failure/reconciliation, API flows, and E2E approval, revision,
+retry, failure, and Agent proposal scenarios.
 
 ## Security
 
