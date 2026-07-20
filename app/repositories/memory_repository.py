@@ -28,6 +28,17 @@ class MemoryRepository:
     async def get_by_id(self, memory_entry_id: UUID) -> AgentMemoryEntryModel | None:
         return await self.session.get(AgentMemoryEntryModel, memory_entry_id)
 
+    async def find_by_execution_event(
+        self, action_execution_id: UUID, event_type: MemoryEventType
+    ) -> AgentMemoryEntryModel | None:
+        result = await self.session.execute(
+            select(AgentMemoryEntryModel).where(
+                AgentMemoryEntryModel.action_execution_id == action_execution_id,
+                AgentMemoryEntryModel.event_type == event_type.value,
+            )
+        )
+        return result.scalar_one_or_none()
+
     async def list(
         self,
         *,

@@ -16,6 +16,7 @@ class MemoryEntryCreate(BaseModel):
     workflow_id: UUID | None = None
     agent_run_id: UUID | None = None
     action_request_id: UUID | None = None
+    action_execution_id: UUID | None = None
     memory_type: MemoryType = MemoryType.EPISODIC
     event_type: MemoryEventType
     summary: str = Field(min_length=1, max_length=3000)

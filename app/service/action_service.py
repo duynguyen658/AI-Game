@@ -23,8 +23,10 @@ from app.core.exceptions import (
     ActionExpiredError,
     ActionRequestNotFoundError,
     ActionVersionConflictError,
+    PersistenceError,
 )
 from app.core.sanitization import sanitize_json, sanitize_text
+from app.database.m5_integrity import is_action_request_duplicate
 from app.repositories.action_execution_repository import ActionExecutionRepository
 from app.repositories.action_request_repository import ActionRequestRepository
 from app.schemas.action_execution import ActionExecutionRead
@@ -47,6 +49,7 @@ class ActionService:
         *,
         registry: ActionRegistry | None = None,
         settings: Settings | None = None,
+        memory_service: MemoryService | None = None,
     ) -> None:
         self.session = session
         self.settings = settings or get_settings()
@@ -55,7 +58,7 @@ class ActionService:
         )
         self.requests = ActionRequestRepository(session)
         self.executions = ActionExecutionRepository(session)
-        self.memories = MemoryService(session, settings=self.settings)
+        self.memories = memory_service or MemoryService(session, settings=self.settings)
         self.policy = PolicyService(session, self.registry)
         self.executor = ControlledActionExecutor(
             session,
@@ -126,17 +129,22 @@ class ActionService:
                     idempotency_key=idempotency_key,
                 ),
                 policy,
+                context,
                 status=status,
                 expires_at=expires_at,
                 rejected_at=rejected_at,
                 rejection_reason=rejection_reason,
             )
             await self.session.commit()
-        except IntegrityError:
+        except IntegrityError as exc:
             await self.session.rollback()
+            if not is_action_request_duplicate(exc):
+                raise PersistenceError("Unable to persist action request") from exc
             duplicate = await self.requests.find_by_idempotency_key(idempotency_key)
             if duplicate is None:
-                raise
+                raise PersistenceError(
+                    "Unable to load duplicate action request"
+                ) from exc
             await self.session.commit()
             return await self._proposal_result(duplicate.action_request_id)
 
@@ -201,6 +209,7 @@ class ActionService:
         if not await self.requests.approve(
             action_request_id,
             actor_id=actor.actor_id,
+            actor_role=actor.role.value,
             expected_version=expected_version,
         ):
             await self.session.rollback()
@@ -292,6 +301,11 @@ class ActionService:
         await self._required(action_request_id)
         models = await self.executions.list_by_request(action_request_id)
         return [action_execution_to_schema(model) for model in models]
+
+    async def reconcile_pending_action_memories(
+        self, *, limit: int = 100
+    ) -> list[ActionExecutionRead]:
+        return await self.executor.reconcile_pending_action_memories(limit=limit)
 
     async def _proposal_result(self, action_request_id: UUID) -> ActionProposalResult:
         request = await self.get(action_request_id)

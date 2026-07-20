@@ -3,14 +3,27 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Generic, TypeVar
+from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from app.core.constants import AgentName, CampaignStatus, PolicyDecision, UserRole
 
+
+class ActionExecutionGuard(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    campaign_id: str
+    workflow_id: UUID
+    expected_campaign_status: CampaignStatus
+    expected_campaign_version: int
+    expected_workflow_status: CampaignStatus
+    expected_revision_number: int
+
+
 InputT = TypeVar("InputT", bound=BaseModel)
 OutputT = TypeVar("OutputT", bound=BaseModel)
-ActionHandler = Callable[[InputT], Awaitable[OutputT]]
+ActionHandler = Callable[[InputT, ActionExecutionGuard], Awaitable[OutputT]]
 
 
 @dataclass(frozen=True)

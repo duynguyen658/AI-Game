@@ -143,6 +143,13 @@ class ActionExecutionStatus(StrEnum):
     CANCELLED = "CANCELLED"
 
 
+class MemoryRecordStatus(StrEnum):
+    NOT_REQUIRED = "NOT_REQUIRED"
+    PENDING = "PENDING"
+    RECORDED = "RECORDED"
+    FAILED = "FAILED"
+
+
 class MemoryType(StrEnum):
     EPISODIC = "EPISODIC"
     OPERATIONAL = "OPERATIONAL"

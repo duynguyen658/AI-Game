@@ -5,7 +5,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agentic.actions.definitions import ActionDefinition
+from app.agentic.actions.definitions import ActionDefinition, ActionExecutionGuard
 from app.agentic.actions.registry import ActionRegistry
 from app.core.config import Settings, get_settings
 from app.core.constants import (
@@ -15,10 +15,8 @@ from app.core.constants import (
     UserRole,
     WorkflowStep,
 )
-from app.core.exceptions import AgentContextError
 from app.schemas.campaign import CampaignMetadataUpdate
-from app.service.campaign_service import CampaignService
-from app.service.workflow_service import WorkflowService
+from app.service.action_state_guard_service import ActionStateGuardService
 
 
 class ScopedActionInput(BaseModel):
@@ -76,23 +74,21 @@ class InternalActionResult(BaseModel):
 
 class CampaignActionHandlers:
     def __init__(self, session: AsyncSession) -> None:
-        self.session = session
-        self.campaigns = CampaignService(session)
-        self.workflows = WorkflowService(session)
+        self.state_guard = ActionStateGuardService(session)
 
     async def create_recommendation(
-        self, payload: InternalRecommendationInput
+        self, payload: InternalRecommendationInput, guard: ActionExecutionGuard
     ) -> InternalActionResult:
-        await self._validate_scope(payload)
+        await self.state_guard.validate(guard)
         return InternalActionResult(
             summary=f"Internal recommendation prepared: {payload.recommendation}",
             changed=False,
         )
 
     async def generate_summary(
-        self, payload: CampaignSummaryInput
+        self, payload: CampaignSummaryInput, guard: ActionExecutionGuard
     ) -> InternalActionResult:
-        campaign = await self._validate_scope(payload)
+        campaign = await self.state_guard.validate(guard)
         return InternalActionResult(
             summary=(
                 f"{campaign.campaign.game_name}: {campaign.campaign.campaign_objective}; "
@@ -102,9 +98,9 @@ class CampaignActionHandlers:
         )
 
     async def prepare_revision(
-        self, payload: RevisionDraftInput
+        self, payload: RevisionDraftInput, guard: ActionExecutionGuard
     ) -> InternalActionResult:
-        await self._validate_scope(payload)
+        await self.state_guard.validate(guard)
         return InternalActionResult(
             summary=(
                 f"Revision draft prepared from feedback: {payload.feedback}. "
@@ -114,11 +110,10 @@ class CampaignActionHandlers:
         )
 
     async def update_metadata(
-        self, payload: UpdateCampaignMetadataInput
+        self, payload: UpdateCampaignMetadataInput, guard: ActionExecutionGuard
     ) -> InternalActionResult:
-        await self._validate_scope(payload)
-        await self.campaigns.update_metadata(
-            payload.campaign_id,
+        await self.state_guard.update_metadata(
+            guard,
             CampaignMetadataUpdate(
                 tone=payload.tone,
                 target_audience=payload.target_audience,
@@ -128,11 +123,10 @@ class CampaignActionHandlers:
         return InternalActionResult(summary="Campaign metadata updated", changed=True)
 
     async def request_regeneration(
-        self, payload: RegenerationInput
+        self, payload: RegenerationInput, guard: ActionExecutionGuard
     ) -> InternalActionResult:
-        await self._validate_scope(payload)
-        await self.workflows.transition(
-            payload.workflow_id,
+        await self.state_guard.transition(
+            guard,
             CampaignStatus.GENERATING,
             step=WorkflowStep.GENERATE_CONTENT,
         )
@@ -141,19 +135,18 @@ class CampaignActionHandlers:
         )
 
     async def add_manual_review_note(
-        self, payload: ManualReviewNoteInput
+        self, payload: ManualReviewNoteInput, guard: ActionExecutionGuard
     ) -> InternalActionResult:
-        await self._validate_scope(payload)
+        await self.state_guard.validate(guard)
         return InternalActionResult(
             summary=f"Manual review note recorded: {payload.note}", changed=True
         )
 
     async def mark_for_manual_review(
-        self, payload: MarkManualReviewInput
+        self, payload: MarkManualReviewInput, guard: ActionExecutionGuard
     ) -> InternalActionResult:
-        await self._validate_scope(payload)
-        await self.workflows.transition(
-            payload.workflow_id,
+        await self.state_guard.transition(
+            guard,
             CampaignStatus.MANUAL_REVIEW_REQUIRED,
             step=WorkflowStep.HUMAN_REVIEW,
         )
@@ -161,18 +154,6 @@ class CampaignActionHandlers:
             summary=f"Campaign marked for manual review: {payload.reason}",
             changed=True,
         )
-
-    async def _validate_scope(self, payload: ScopedActionInput):
-        campaign = await self.campaigns.get_campaign(payload.campaign_id)
-        workflow = await self.workflows.get_workflow(payload.workflow_id)
-        if (
-            workflow.campaign_id != payload.campaign_id
-            or workflow.revision_number != payload.revision_number
-        ):
-            await self.session.rollback()
-            raise AgentContextError("Action scope does not match workflow revision")
-        await self.session.commit()
-        return campaign
 
 
 def build_default_action_registry(

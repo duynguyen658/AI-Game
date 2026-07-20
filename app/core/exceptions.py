@@ -190,6 +190,22 @@ class ActionExecutionConflictError(ApplicationError):
     error_code = "ACTION_EXECUTION_CONFLICT"
 
 
+class ActionPolicyReevaluationDeniedError(ApplicationError):
+    error_code = "POLICY_REEVALUATION_DENIED"
+
+
+class ActionPolicyApprovalRequiredError(ApplicationError):
+    error_code = "POLICY_REEVALUATION_APPROVAL_REQUIRED"
+
+
+class ActionStateChangedError(ApplicationError):
+    error_code = "ACTION_STATE_CHANGED"
+
+
+class ActionScopeConflictError(ApplicationError):
+    error_code = "ACTION_SCOPE_CONFLICT"
+
+
 class ControlledActionExecutionError(ApplicationError):
     error_code = "ACTION_EXECUTION_ERROR"
 

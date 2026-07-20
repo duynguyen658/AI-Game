@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.constants import ActionRequestStatus
 from app.database.models import AgentActionRequestModel
 from app.schemas.action_request import ActionRequestCreate
-from app.schemas.policy_decision import PolicyEvaluationResult
+from app.schemas.policy_decision import PolicyEvaluationContext, PolicyEvaluationResult
 
 
 class ActionRequestRepository:
@@ -21,6 +21,7 @@ class ActionRequestRepository:
         self,
         payload: ActionRequestCreate,
         policy: PolicyEvaluationResult,
+        context: PolicyEvaluationContext,
         *,
         status: ActionRequestStatus,
         expires_at: datetime | None = None,
@@ -33,6 +34,16 @@ class ActionRequestRepository:
             policy_reason_code=policy.reason_code,
             policy_reason=policy.reason,
             required_role=policy.required_role.value if policy.required_role else None,
+            last_policy_decision=policy.decision.value,
+            last_policy_reason_code=policy.reason_code,
+            last_policy_reason=policy.reason,
+            last_required_role=(
+                policy.required_role.value if policy.required_role else None
+            ),
+            last_policy_campaign_status=context.campaign_status.value,
+            last_policy_workflow_status=context.workflow_status.value,
+            last_policy_revision_number=context.revision_number,
+            last_policy_evaluated_at=datetime.now(UTC),
             status=status.value,
             expires_at=expires_at,
             rejected_at=rejected_at,
@@ -112,17 +123,39 @@ class ActionRequestRepository:
             offset=offset,
         )
 
-    async def save_policy_result(
+    async def save_latest_policy_result(
         self,
         request: AgentActionRequestModel,
         policy: PolicyEvaluationResult,
+        context: PolicyEvaluationContext,
+        *,
+        reason_code: str | None = None,
+        reason: str | None = None,
     ) -> AgentActionRequestModel:
-        request.policy_decision = policy.decision.value
-        request.policy_reason_code = policy.reason_code
-        request.policy_reason = policy.reason
-        request.required_role = (
+        request.last_policy_decision = policy.decision.value
+        request.last_policy_reason_code = reason_code or policy.reason_code
+        request.last_policy_reason = reason or policy.reason
+        request.last_required_role = (
             policy.required_role.value if policy.required_role else None
         )
+        request.last_policy_campaign_status = context.campaign_status.value
+        request.last_policy_workflow_status = context.workflow_status.value
+        request.last_policy_revision_number = context.revision_number
+        request.last_policy_evaluated_at = datetime.now(UTC)
+        await self.session.flush()
+        return request
+
+    async def reject_after_policy_reevaluation(
+        self,
+        request: AgentActionRequestModel,
+        *,
+        reason: str,
+    ) -> AgentActionRequestModel:
+        now = datetime.now(UTC)
+        request.status = ActionRequestStatus.REJECTED.value
+        request.rejected_at = now
+        request.rejection_reason = reason
+        request.version += 1
         await self.session.flush()
         return request
 
@@ -136,7 +169,12 @@ class ActionRequestRepository:
         return request
 
     async def approve(
-        self, action_request_id: UUID, *, actor_id: str, expected_version: int
+        self,
+        action_request_id: UUID,
+        *,
+        actor_id: str,
+        actor_role: str,
+        expected_version: int,
     ) -> bool:
         now = datetime.now(UTC)
         result = await self.session.execute(
@@ -150,6 +188,7 @@ class ActionRequestRepository:
             .values(
                 status=ActionRequestStatus.APPROVED.value,
                 approved_by=actor_id,
+                approved_role=actor_role,
                 approved_at=now,
                 version=AgentActionRequestModel.version + 1,
                 updated_at=now,
@@ -198,8 +237,12 @@ class ActionRequestRepository:
             .where(
                 AgentActionRequestModel.action_request_id == action_request_id,
                 AgentActionRequestModel.version == expected_version,
-                AgentActionRequestModel.status
-                == ActionRequestStatus.PENDING_APPROVAL.value,
+                AgentActionRequestModel.status.in_(
+                    [
+                        ActionRequestStatus.PENDING_APPROVAL.value,
+                        ActionRequestStatus.APPROVED.value,
+                    ]
+                ),
             )
             .values(
                 status=ActionRequestStatus.EXPIRED.value,

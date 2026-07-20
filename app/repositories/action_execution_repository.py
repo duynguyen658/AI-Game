@@ -7,7 +7,11 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.constants import ActionExecutionStatus
+from app.agentic.actions.definitions import ActionExecutionGuard
+from app.core.constants import (
+    ActionExecutionStatus,
+    MemoryRecordStatus,
+)
 from app.database.models import AgentActionExecutionModel
 
 
@@ -16,12 +20,20 @@ class ActionExecutionRepository:
         self.session = session
 
     async def create(
-        self, *, action_request_id: UUID, idempotency_key: str
+        self,
+        *,
+        action_request_id: UUID,
+        idempotency_key: str,
+        guard: ActionExecutionGuard,
     ) -> AgentActionExecutionModel:
         model = AgentActionExecutionModel(
             action_request_id=action_request_id,
             idempotency_key=idempotency_key,
             status=ActionExecutionStatus.CREATED.value,
+            reserved_campaign_status=guard.expected_campaign_status.value,
+            reserved_campaign_version=guard.expected_campaign_version,
+            reserved_workflow_status=guard.expected_workflow_status.value,
+            reserved_revision_number=guard.expected_revision_number,
         )
         self.session.add(model)
         await self.session.flush()
@@ -31,6 +43,16 @@ class ActionExecutionRepository:
         self, action_execution_id: UUID
     ) -> AgentActionExecutionModel | None:
         return await self.session.get(AgentActionExecutionModel, action_execution_id)
+
+    async def get_by_id_for_update(
+        self, action_execution_id: UUID
+    ) -> AgentActionExecutionModel | None:
+        result = await self.session.execute(
+            select(AgentActionExecutionModel)
+            .where(AgentActionExecutionModel.action_execution_id == action_execution_id)
+            .with_for_update()
+        )
+        return result.scalar_one_or_none()
 
     async def list_by_request(
         self, action_request_id: UUID
@@ -74,6 +96,7 @@ class ActionExecutionRepository:
         execution.result_summary = result_summary
         execution.duration_ms = duration_ms
         execution.completed_at = datetime.now(UTC)
+        execution.memory_record_status = MemoryRecordStatus.PENDING.value
         await self.session.flush()
         return execution
 
@@ -90,6 +113,7 @@ class ActionExecutionRepository:
         execution.error_message = error_message
         execution.duration_ms = duration_ms
         execution.completed_at = datetime.now(UTC)
+        execution.memory_record_status = MemoryRecordStatus.PENDING.value
         await self.session.flush()
         return execution
 
@@ -105,5 +129,67 @@ class ActionExecutionRepository:
         execution.error_message = error_message
         execution.duration_ms = duration_ms
         execution.completed_at = datetime.now(UTC)
+        execution.memory_record_status = MemoryRecordStatus.PENDING.value
         await self.session.flush()
         return execution
+
+    async def start_memory_record_attempt(
+        self, execution: AgentActionExecutionModel
+    ) -> AgentActionExecutionModel:
+        execution.memory_record_status = MemoryRecordStatus.PENDING.value
+        execution.memory_record_attempts += 1
+        execution.memory_record_error_code = None
+        execution.memory_record_error_message = None
+        await self.session.flush()
+        return execution
+
+    async def mark_memory_recorded(
+        self, execution: AgentActionExecutionModel
+    ) -> AgentActionExecutionModel:
+        execution.memory_record_status = MemoryRecordStatus.RECORDED.value
+        execution.memory_recorded_at = datetime.now(UTC)
+        execution.memory_record_error_code = None
+        execution.memory_record_error_message = None
+        await self.session.flush()
+        return execution
+
+    async def mark_memory_record_failed(
+        self,
+        execution: AgentActionExecutionModel,
+        *,
+        error_code: str,
+        error_message: str,
+    ) -> AgentActionExecutionModel:
+        execution.memory_record_status = MemoryRecordStatus.FAILED.value
+        execution.memory_record_error_code = error_code
+        execution.memory_record_error_message = error_message
+        await self.session.flush()
+        return execution
+
+    async def list_reconcilable_memories(
+        self, *, limit: int
+    ) -> Sequence[AgentActionExecutionModel]:
+        result = await self.session.execute(
+            select(AgentActionExecutionModel)
+            .where(
+                AgentActionExecutionModel.status.in_(
+                    [
+                        ActionExecutionStatus.COMPLETED.value,
+                        ActionExecutionStatus.FAILED.value,
+                        ActionExecutionStatus.CANCELLED.value,
+                    ]
+                ),
+                AgentActionExecutionModel.memory_record_status.in_(
+                    [
+                        MemoryRecordStatus.PENDING.value,
+                        MemoryRecordStatus.FAILED.value,
+                    ]
+                ),
+            )
+            .order_by(
+                AgentActionExecutionModel.updated_at,
+                AgentActionExecutionModel.action_execution_id,
+            )
+            .limit(limit)
+        )
+        return result.scalars().all()

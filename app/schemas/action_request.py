@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.core.constants import (
     ActionRequestStatus,
     AgentName,
+    CampaignStatus,
     PolicyDecision,
     UserRole,
 )
@@ -41,10 +42,19 @@ class ActionRequestRead(ActionRequestCreate):
     policy_reason_code: str = Field(max_length=100)
     policy_reason: str = Field(max_length=500)
     required_role: UserRole | None = None
+    last_policy_decision: PolicyDecision | None = None
+    last_policy_reason_code: str | None = Field(default=None, max_length=100)
+    last_policy_reason: str | None = Field(default=None, max_length=500)
+    last_required_role: UserRole | None = None
+    last_policy_campaign_status: CampaignStatus | None = None
+    last_policy_workflow_status: CampaignStatus | None = None
+    last_policy_revision_number: int | None = Field(default=None, ge=0)
+    last_policy_evaluated_at: datetime | None = None
     status: ActionRequestStatus
     requested_at: datetime
     expires_at: datetime | None = None
     approved_by: str | None = None
+    approved_role: UserRole | None = None
     approved_at: datetime | None = None
     rejected_by: str | None = None
     rejected_at: datetime | None = None

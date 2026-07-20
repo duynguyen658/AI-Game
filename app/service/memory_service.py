@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agentic.memory.summarizer import DeterministicMemorySummarizer
@@ -14,9 +15,12 @@ from app.core.exceptions import (
     AgentContextError,
     CampaignNotFoundError,
     MemoryEntryNotFoundError,
+    PersistenceError,
     WorkflowNotFoundError,
 )
 from app.core.sanitization import sanitize_json, sanitize_text
+from app.database.m5_integrity import is_memory_execution_event_duplicate
+from app.repositories.action_execution_repository import ActionExecutionRepository
 from app.repositories.action_request_repository import ActionRequestRepository
 from app.repositories.agent_run_repository import AgentRunRepository
 from app.repositories.campaign_repository import CampaignRepository
@@ -37,6 +41,7 @@ class MemoryService:
         self.workflows = WorkflowRepository(session)
         self.agent_runs = AgentRunRepository(session)
         self.action_requests = ActionRequestRepository(session)
+        self.action_executions = ActionExecutionRepository(session)
         self.summarizer = DeterministicMemorySummarizer()
 
     async def record_event(
@@ -49,6 +54,7 @@ class MemoryService:
         workflow_id: UUID | None = None,
         agent_run_id: UUID | None = None,
         action_request_id: UUID | None = None,
+        action_execution_id: UUID | None = None,
         memory_type: MemoryType = MemoryType.EPISODIC,
         importance: int = 3,
         expires_at: datetime | None = None,
@@ -58,26 +64,44 @@ class MemoryService:
             workflow_id=workflow_id,
             agent_run_id=agent_run_id,
             action_request_id=action_request_id,
+            action_execution_id=action_execution_id,
         )
         safe_metadata = self._bounded_metadata(metadata or {})
         expiration = expires_at or (
             datetime.now(UTC) + timedelta(days=self.settings.memory_default_ttl_days)
         )
-        model = await self.memories.create(
-            MemoryEntryCreate(
-                campaign_id=campaign_id,
-                workflow_id=workflow_id,
-                agent_run_id=agent_run_id,
-                action_request_id=action_request_id,
-                memory_type=memory_type,
-                event_type=event_type,
-                summary=self.summarizer.summarize(event_type, summary),
-                metadata=safe_metadata,
-                importance=importance,
-                expires_at=expiration,
+        try:
+            model = await self.memories.create(
+                MemoryEntryCreate(
+                    campaign_id=campaign_id,
+                    workflow_id=workflow_id,
+                    agent_run_id=agent_run_id,
+                    action_request_id=action_request_id,
+                    action_execution_id=action_execution_id,
+                    memory_type=memory_type,
+                    event_type=event_type,
+                    summary=self.summarizer.summarize(event_type, summary),
+                    metadata=safe_metadata,
+                    importance=importance,
+                    expires_at=expiration,
+                )
             )
-        )
-        await self.session.commit()
+            await self.session.commit()
+        except IntegrityError as exc:
+            await self.session.rollback()
+            if action_execution_id is not None and is_memory_execution_event_duplicate(
+                exc
+            ):
+                existing = await self.memories.find_by_execution_event(
+                    action_execution_id, event_type
+                )
+                if existing is not None:
+                    await self.session.commit()
+                    return memory_entry_to_schema(existing)
+            raise PersistenceError("Unable to persist memory entry") from exc
+        except Exception:
+            await self.session.rollback()
+            raise
         return memory_entry_to_schema(model)
 
     async def get(self, memory_entry_id: UUID) -> MemoryEntryRead:
@@ -165,6 +189,7 @@ class MemoryService:
         workflow_id: UUID | None,
         agent_run_id: UUID | None,
         action_request_id: UUID | None,
+        action_execution_id: UUID | None,
     ) -> None:
         if await self.campaigns.get_by_id(campaign_id) is None:
             await self.session.rollback()
@@ -186,6 +211,7 @@ class MemoryService:
             ):
                 await self.session.rollback()
                 raise AgentContextError("Memory Agent run scope is invalid")
+        request = None
         if action_request_id is not None:
             request = await self.action_requests.get_by_id(action_request_id)
             if (
@@ -196,6 +222,15 @@ class MemoryService:
             ):
                 await self.session.rollback()
                 raise AgentContextError("Memory action request scope is invalid")
+        if action_execution_id is not None:
+            execution = await self.action_executions.get_by_id(action_execution_id)
+            if (
+                execution is None
+                or request is None
+                or execution.action_request_id != request.action_request_id
+            ):
+                await self.session.rollback()
+                raise AgentContextError("Memory action execution scope is invalid")
 
     def _bounded_metadata(self, value: dict[str, Any]) -> dict[str, Any]:
         safe = sanitize_json(value, max_string_characters=2000)

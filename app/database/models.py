@@ -25,6 +25,7 @@ from app.core.constants import (
     ActionRequestStatus,
     AgentRunStatus,
     CampaignStatus,
+    MemoryRecordStatus,
     MemoryType,
     WorkflowStep,
 )
@@ -308,7 +309,7 @@ class AgentActionRequestModel(Base):
             name="ck_action_requests_forbidden_rejected",
         ),
         CheckConstraint(
-            "status <> 'PENDING_APPROVAL' OR (policy_decision = 'APPROVAL_REQUIRED' AND expires_at IS NOT NULL)",
+            "status <> 'PENDING_APPROVAL' OR ((policy_decision = 'APPROVAL_REQUIRED' OR last_policy_decision = 'APPROVAL_REQUIRED') AND expires_at IS NOT NULL)",
             name="ck_action_requests_pending_consistency",
         ),
         CheckConstraint(
@@ -364,6 +365,16 @@ class AgentActionRequestModel(Base):
     policy_reason_code: Mapped[str] = mapped_column(String(100), nullable=False)
     policy_reason: Mapped[str] = mapped_column(String(500), nullable=False)
     required_role: Mapped[str | None] = mapped_column(String(50))
+    last_policy_decision: Mapped[str | None] = mapped_column(String(50))
+    last_policy_reason_code: Mapped[str | None] = mapped_column(String(100))
+    last_policy_reason: Mapped[str | None] = mapped_column(String(500))
+    last_required_role: Mapped[str | None] = mapped_column(String(50))
+    last_policy_campaign_status: Mapped[str | None] = mapped_column(String(50))
+    last_policy_workflow_status: Mapped[str | None] = mapped_column(String(50))
+    last_policy_revision_number: Mapped[int | None] = mapped_column(Integer)
+    last_policy_evaluated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
     status: Mapped[str] = mapped_column(
         String(50),
         nullable=False,
@@ -375,6 +386,7 @@ class AgentActionRequestModel(Base):
     )
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     approved_by: Mapped[str | None] = mapped_column(String(200))
+    approved_role: Mapped[str | None] = mapped_column(String(50))
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     rejected_by: Mapped[str | None] = mapped_column(String(200))
     rejected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -410,6 +422,14 @@ class AgentActionExecutionModel(Base):
         CheckConstraint(
             "duration_ms IS NULL OR duration_ms >= 0",
             name="ck_action_executions_duration_nonnegative",
+        ),
+        CheckConstraint(
+            "memory_record_attempts >= 0",
+            name="ck_action_executions_memory_attempts_nonnegative",
+        ),
+        CheckConstraint(
+            "memory_record_status <> 'RECORDED' OR memory_recorded_at IS NOT NULL",
+            name="ck_action_executions_memory_recorded_at",
         ),
         CheckConstraint(
             "(status = 'CREATED' AND started_at IS NULL AND completed_at IS NULL) OR "
@@ -452,6 +472,19 @@ class AgentActionExecutionModel(Base):
     result_summary: Mapped[str | None] = mapped_column(Text)
     error_code: Mapped[str | None] = mapped_column(String(100))
     error_message: Mapped[str | None] = mapped_column(Text)
+    reserved_campaign_status: Mapped[str | None] = mapped_column(String(50))
+    reserved_campaign_version: Mapped[int | None] = mapped_column(Integer)
+    reserved_workflow_status: Mapped[str | None] = mapped_column(String(50))
+    reserved_revision_number: Mapped[int | None] = mapped_column(Integer)
+    memory_record_status: Mapped[str] = mapped_column(
+        String(50), nullable=False, default=MemoryRecordStatus.NOT_REQUIRED.value
+    )
+    memory_record_attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+    memory_record_error_code: Mapped[str | None] = mapped_column(String(100))
+    memory_record_error_message: Mapped[str | None] = mapped_column(Text)
+    memory_recorded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now
     )
@@ -461,6 +494,9 @@ class AgentActionExecutionModel(Base):
 
     action_request: Mapped[AgentActionRequestModel] = relationship(
         back_populates="executions"
+    )
+    memory_entries: Mapped[list[AgentMemoryEntryModel]] = relationship(
+        back_populates="action_execution"
     )
 
 
@@ -474,6 +510,11 @@ class AgentMemoryEntryModel(Base):
         CheckConstraint(
             "expires_at IS NULL OR expires_at > created_at",
             name="ck_memory_entries_expiration_order",
+        ),
+        UniqueConstraint(
+            "action_execution_id",
+            "event_type",
+            name="uq_memory_entries_execution_event",
         ),
         Index("ix_memory_entries_campaign_created", "campaign_id", "created_at"),
         Index("ix_memory_entries_workflow_created", "workflow_id", "created_at"),
@@ -499,6 +540,10 @@ class AgentMemoryEntryModel(Base):
         ForeignKey("agent_action_requests.action_request_id", ondelete="RESTRICT"),
         index=True,
     )
+    action_execution_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("agent_action_executions.action_execution_id", ondelete="RESTRICT"),
+        index=True,
+    )
     memory_type: Mapped[str] = mapped_column(
         String(50), nullable=False, default=MemoryType.EPISODIC.value
     )
@@ -521,6 +566,9 @@ class AgentMemoryEntryModel(Base):
         back_populates="memory_entries"
     )
     action_request: Mapped[AgentActionRequestModel | None] = relationship(
+        back_populates="memory_entries"
+    )
+    action_execution: Mapped[AgentActionExecutionModel | None] = relationship(
         back_populates="memory_entries"
     )
 
