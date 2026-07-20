@@ -52,6 +52,11 @@ class Settings(BaseSettings):
     agent_max_tool_calls: int = Field(default=8, ge=0, le=50)
     agent_timeout_seconds: int = Field(default=90, ge=1, le=300)
     agent_max_tool_result_characters: int = Field(default=12_000, ge=100, le=50_000)
+    agent_max_action_proposals: int = Field(default=3, ge=0, le=10)
+    action_approval_ttl_seconds: int = Field(default=3600, ge=60, le=86_400)
+    action_execution_timeout_seconds: int = Field(default=60, ge=1, le=300)
+    memory_max_results: int = Field(default=20, ge=1, le=100)
+    memory_default_ttl_days: int = Field(default=90, ge=1, le=3650)
 
     log_level: str = "INFO"
 

@@ -152,3 +152,51 @@ class InvalidToolCallTransitionError(AgentExecutionError):
 
 class AgentContextError(AgentExecutionError):
     error_code = "AGENT_CONTEXT_ERROR"
+
+
+class AgentActionProposalLimitError(AgentExecutionError):
+    error_code = "AGENT_ACTION_PROPOSAL_LIMIT"
+
+
+class ActionRequestNotFoundError(ApplicationError):
+    error_code = "ACTION_REQUEST_NOT_FOUND"
+
+
+class ActionNotFoundError(ApplicationError):
+    error_code = "ACTION_NOT_FOUND"
+
+
+class ActionNotAllowedError(ApplicationError):
+    error_code = "ACTION_NOT_ALLOWED"
+
+
+class ActionApprovalRequiredError(ApplicationError):
+    error_code = "ACTION_APPROVAL_REQUIRED"
+
+
+class ActionAlreadyDecidedError(ApplicationError):
+    error_code = "ACTION_ALREADY_DECIDED"
+
+
+class ActionExpiredError(ApplicationError):
+    error_code = "ACTION_EXPIRED"
+
+
+class ActionVersionConflictError(ApplicationError):
+    error_code = "ACTION_VERSION_CONFLICT"
+
+
+class ActionExecutionConflictError(ApplicationError):
+    error_code = "ACTION_EXECUTION_CONFLICT"
+
+
+class ControlledActionExecutionError(ApplicationError):
+    error_code = "ACTION_EXECUTION_ERROR"
+
+
+class PolicyDeniedError(ApplicationError):
+    error_code = "POLICY_DENIED"
+
+
+class MemoryEntryNotFoundError(ApplicationError):
+    error_code = "MEMORY_ENTRY_NOT_FOUND"
