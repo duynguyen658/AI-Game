@@ -3,7 +3,7 @@ from uuid import uuid4
 import pytest
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.agentic.actions.definitions import ActionDefinition
+from app.agentic.actions.definitions import ActionDefinition, ActionExecutionGuard
 from app.agentic.actions.registry import ActionRegistry
 from app.agentic.policies.engine import PolicyEngine
 from app.core.constants import (
@@ -27,7 +27,7 @@ class Output(BaseModel):
     message: str
 
 
-async def handler(_: Input) -> Output:
+async def handler(_: Input, __: ActionExecutionGuard) -> Output:
     return Output(message="done")
 
 

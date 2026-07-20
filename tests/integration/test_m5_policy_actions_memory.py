@@ -17,7 +17,7 @@ from app.agentic.actions.campaign_actions import (
     InternalActionResult,
     InternalRecommendationInput,
 )
-from app.agentic.actions.definitions import ActionDefinition
+from app.agentic.actions.definitions import ActionDefinition, ActionExecutionGuard
 from app.agentic.actions.registry import ActionRegistry
 from app.core.constants import (
     ActionExecutionStatus,
@@ -26,14 +26,19 @@ from app.core.constants import (
     ApprovalDecision,
     CampaignStatus,
     MemoryEventType,
+    MemoryRecordStatus,
     PolicyDecision,
     UserRole,
 )
 from app.core.exceptions import (
     ActionExecutionConflictError,
     ActionExpiredError,
+    ActionPolicyApprovalRequiredError,
+    ActionPolicyReevaluationDeniedError,
+    ActionStateChangedError,
     ActionVersionConflictError,
     ControlledActionExecutionError,
+    PersistenceError,
 )
 from app.database.models import (
     AgentActionExecutionModel,
@@ -47,6 +52,7 @@ from app.schemas.agent_run import AgentRunCreate
 from app.schemas.approval import ApprovalRequest
 from app.schemas.campaign import CampaignCreate
 from app.service.action_service import ActionService
+from app.service.action_state_guard_service import ActionStateGuardService
 from app.service.agent_run_service import AgentRunService
 from app.service.approval_service import ApprovalService
 from app.service.auth_service import AuthenticatedActor
@@ -168,6 +174,44 @@ def proposal(action_name: str, workflow, **arguments) -> AgentActionProposal:
         },
         rationale_summary="Short operational reason token=private-value",
     )
+
+
+def recommendation_definition(
+    handler,
+    *,
+    policy: PolicyDecision,
+    required_role: UserRole | None = None,
+) -> ActionDefinition:
+    return ActionDefinition(
+        name="create_internal_recommendation",
+        description="Controlled policy freshness test action",
+        input_model=InternalRecommendationInput,
+        output_model=InternalActionResult,
+        default_policy=policy,
+        reversible=True,
+        allowed_agents=frozenset({AgentName.BRIEF_ANALYST}),
+        handler=handler,
+        required_role=required_role,
+        allowed_campaign_statuses=frozenset({CampaignStatus.ANALYZING}),
+        allowed_workflow_statuses=frozenset({CampaignStatus.ANALYZING}),
+        approval_ttl_seconds=(
+            3600 if policy == PolicyDecision.APPROVAL_REQUIRED else None
+        ),
+    )
+
+
+class SequencedActionRegistry(ActionRegistry):
+    def __init__(self, definitions: list[ActionDefinition]) -> None:
+        super().__init__(definitions[:1])
+        self.definitions = definitions
+        self.index = 0
+
+    def get(self, name: str) -> ActionDefinition:
+        definition = self.definitions[min(self.index, len(self.definitions) - 1)]
+        self.index += 1
+        if definition.name != name:
+            return super().get(name)
+        return definition
 
 
 @pytest.mark.asyncio
@@ -528,7 +572,9 @@ async def test_execution_failure_and_cancellation_are_terminal(
         agent_name=AgentName.BRIEF_ANALYST,
     )
 
-    async def fail(_: InternalRecommendationInput) -> InternalActionResult:
+    async def fail(
+        _: InternalRecommendationInput, __: ActionExecutionGuard
+    ) -> InternalActionResult:
         raise RuntimeError("password=private-action-secret")
 
     failing_registry = ActionRegistry(
@@ -573,7 +619,9 @@ async def test_execution_failure_and_cancellation_are_terminal(
     await db_session.commit()
     started = asyncio.Event()
 
-    async def block(_: InternalRecommendationInput) -> InternalActionResult:
+    async def block(
+        _: InternalRecommendationInput, __: ActionExecutionGuard
+    ) -> InternalActionResult:
         started.set()
         await asyncio.Event().wait()
         return InternalActionResult(summary="unreachable", changed=False)
@@ -1009,6 +1057,349 @@ async def test_internal_write_handlers_use_services_and_valid_transitions(
     )
     manual = await WorkflowService(db_session).get_workflow(review_workflow.workflow_id)
     assert manual.status == CampaignStatus.MANUAL_REVIEW_REQUIRED
+
+
+@pytest.mark.asyncio
+async def test_fresh_policy_rejects_approved_metadata_after_campaign_change(
+    db_session: AsyncSession,
+) -> None:
+    workflow, run = await create_scope(
+        db_session,
+        campaign_id="CL-M5-STALE-CAMPAIGN",
+        status=CampaignStatus.RECEIVED,
+        agent_name=AgentName.BRIEF_ANALYST,
+    )
+    manager = AuthenticatedActor(actor_id="manager-stale", role=UserRole.MANAGER)
+    pending = await ActionService(db_session).propose(
+        agent_run_id=run.agent_run_id,
+        agent_name=AgentName.BRIEF_ANALYST,
+        proposal=proposal(
+            "update_campaign_metadata", workflow, tone="Must not be written"
+        ),
+    )
+    approved = await ActionService(db_session).approve(
+        pending.action_request.action_request_id,
+        actor=manager,
+        expected_version=pending.action_request.version,
+    )
+    await WorkflowService(db_session).transition(
+        workflow.workflow_id, CampaignStatus.VALIDATING
+    )
+
+    with pytest.raises(ActionPolicyReevaluationDeniedError):
+        await ActionService(db_session).execute(
+            approved.action_request_id,
+            actor=manager,
+            expected_version=approved.version,
+        )
+
+    request = await ActionService(db_session).get(approved.action_request_id)
+    campaign = await CampaignService(db_session).get_campaign(workflow.campaign_id)
+    executions = await ActionService(db_session).list_executions(
+        approved.action_request_id
+    )
+    assert request.status == ActionRequestStatus.REJECTED
+    assert request.last_policy_reason_code == "POLICY_REEVALUATION_DENIED"
+    assert campaign.campaign.tone == "Cyberpunk"
+    assert executions == []
+
+
+@pytest.mark.asyncio
+async def test_fresh_policy_rejects_approval_after_workflow_change(
+    db_session: AsyncSession,
+) -> None:
+    workflow, run = await create_scope(
+        db_session,
+        campaign_id="CL-M5-STALE-WORKFLOW",
+        status=CampaignStatus.REVIEWING,
+        agent_name=AgentName.CONTENT_REVIEWER,
+    )
+    reviewer = AuthenticatedActor(actor_id="reviewer-stale", role=UserRole.REVIEWER)
+    pending = await ActionService(db_session).propose(
+        agent_run_id=run.agent_run_id,
+        agent_name=AgentName.CONTENT_REVIEWER,
+        proposal=proposal(
+            "mark_for_manual_review", workflow, reason="Needs a human pass"
+        ),
+    )
+    approved = await ActionService(db_session).approve(
+        pending.action_request.action_request_id,
+        actor=reviewer,
+        expected_version=pending.action_request.version,
+    )
+    await WorkflowService(db_session).transition(
+        workflow.workflow_id, CampaignStatus.PENDING_APPROVAL
+    )
+
+    with pytest.raises(ActionPolicyReevaluationDeniedError):
+        await ActionService(db_session).execute(
+            approved.action_request_id,
+            actor=reviewer,
+            expected_version=approved.version,
+        )
+    current = await WorkflowService(db_session).get_workflow(workflow.workflow_id)
+    assert current.status == CampaignStatus.PENDING_APPROVAL
+    assert (
+        await ActionService(db_session).list_executions(approved.action_request_id)
+        == []
+    )
+
+
+@pytest.mark.asyncio
+async def test_safe_policy_becoming_approval_required_blocks_automatic_execution(
+    db_session: AsyncSession,
+) -> None:
+    workflow, run = await create_scope(
+        db_session,
+        campaign_id="CL-M5-SAFE-CHANGED",
+        status=CampaignStatus.ANALYZING,
+        agent_name=AgentName.BRIEF_ANALYST,
+    )
+    handler_calls = 0
+
+    async def handler(
+        _: InternalRecommendationInput, __: ActionExecutionGuard
+    ) -> InternalActionResult:
+        nonlocal handler_calls
+        handler_calls += 1
+        return InternalActionResult(summary="unexpected", changed=False)
+
+    registry = SequencedActionRegistry(
+        [
+            recommendation_definition(handler, policy=PolicyDecision.SAFE),
+            recommendation_definition(
+                handler,
+                policy=PolicyDecision.APPROVAL_REQUIRED,
+                required_role=UserRole.REVIEWER,
+            ),
+        ]
+    )
+    with pytest.raises(ActionPolicyApprovalRequiredError):
+        await ActionService(db_session, registry=registry).propose(
+            agent_run_id=run.agent_run_id,
+            agent_name=AgentName.BRIEF_ANALYST,
+            proposal=proposal(
+                "create_internal_recommendation",
+                workflow,
+                recommendation="Fresh approval required",
+            ),
+        )
+
+    request = (await db_session.execute(select(AgentActionRequestModel))).scalar_one()
+    assert request.status == ActionRequestStatus.PENDING_APPROVAL.value
+    assert request.last_policy_reason_code == "POLICY_REEVALUATION_APPROVAL_REQUIRED"
+    assert handler_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_fresh_policy_rejects_approval_with_now_insufficient_role(
+    db_session: AsyncSession,
+) -> None:
+    workflow, run = await create_scope(
+        db_session,
+        campaign_id="CL-M5-ROLE-CHANGED",
+        status=CampaignStatus.ANALYZING,
+        agent_name=AgentName.BRIEF_ANALYST,
+    )
+    handler_calls = 0
+
+    async def handler(
+        _: InternalRecommendationInput, __: ActionExecutionGuard
+    ) -> InternalActionResult:
+        nonlocal handler_calls
+        handler_calls += 1
+        return InternalActionResult(summary="unexpected", changed=False)
+
+    registry = SequencedActionRegistry(
+        [
+            recommendation_definition(
+                handler,
+                policy=PolicyDecision.APPROVAL_REQUIRED,
+                required_role=UserRole.REVIEWER,
+            ),
+            recommendation_definition(
+                handler,
+                policy=PolicyDecision.APPROVAL_REQUIRED,
+                required_role=UserRole.MANAGER,
+            ),
+        ]
+    )
+    service = ActionService(db_session, registry=registry)
+    pending = await service.propose(
+        agent_run_id=run.agent_run_id,
+        agent_name=AgentName.BRIEF_ANALYST,
+        proposal=proposal(
+            "create_internal_recommendation",
+            workflow,
+            recommendation="Role changed",
+        ),
+    )
+    reviewer = AuthenticatedActor(actor_id="reviewer-old", role=UserRole.REVIEWER)
+    approved = await service.approve(
+        pending.action_request.action_request_id,
+        actor=reviewer,
+        expected_version=pending.action_request.version,
+    )
+
+    with pytest.raises(ActionPolicyApprovalRequiredError):
+        await service.execute(
+            approved.action_request_id,
+            actor=AuthenticatedActor(actor_id="manager-current", role=UserRole.MANAGER),
+            expected_version=approved.version,
+        )
+    request = await service.get(approved.action_request_id)
+    assert request.status == ActionRequestStatus.REJECTED
+    assert request.last_required_role == UserRole.MANAGER
+    assert handler_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_state_change_after_reservation_fails_without_side_effect(
+    db_session: AsyncSession,
+) -> None:
+    workflow, run = await create_scope(
+        db_session,
+        campaign_id="CL-M5-RESERVATION-RACE",
+        status=CampaignStatus.ANALYZING,
+        agent_name=AgentName.BRIEF_ANALYST,
+    )
+    reserved = asyncio.Event()
+    resume = asyncio.Event()
+    handler_calls = 0
+
+    async def run_action():
+        async with AsyncSessionLocal() as action_session:
+
+            async def guarded_handler(
+                _: InternalRecommendationInput, guard: ActionExecutionGuard
+            ) -> InternalActionResult:
+                nonlocal handler_calls
+                reserved.set()
+                await resume.wait()
+                await ActionStateGuardService(action_session).validate(guard)
+                handler_calls += 1
+                return InternalActionResult(summary="validated", changed=False)
+
+            registry = ActionRegistry(
+                [recommendation_definition(guarded_handler, policy=PolicyDecision.SAFE)]
+            )
+            return await ActionService(action_session, registry=registry).propose(
+                agent_run_id=run.agent_run_id,
+                agent_name=AgentName.BRIEF_ANALYST,
+                proposal=proposal(
+                    "create_internal_recommendation",
+                    workflow,
+                    recommendation="Race safely",
+                ),
+            )
+
+    task = asyncio.create_task(run_action())
+    await reserved.wait()
+    async with AsyncSessionLocal() as transition_session:
+        await WorkflowService(transition_session).transition(
+            workflow.workflow_id, CampaignStatus.GENERATING
+        )
+    resume.set()
+    with pytest.raises(ActionStateChangedError):
+        await task
+
+    execution = (
+        await db_session.execute(select(AgentActionExecutionModel))
+    ).scalar_one()
+    assert execution.status == ActionExecutionStatus.FAILED.value
+    assert execution.error_code == "ACTION_STATE_CHANGED"
+    assert handler_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_memory_failure_reconciles_once_without_reexecuting_handler(
+    db_session: AsyncSession,
+) -> None:
+    workflow, run = await create_scope(
+        db_session,
+        campaign_id="CL-M5-MEMORY-RECONCILE",
+        status=CampaignStatus.ANALYZING,
+        agent_name=AgentName.BRIEF_ANALYST,
+    )
+    handler_calls = 0
+
+    async def handler(
+        _: InternalRecommendationInput, __: ActionExecutionGuard
+    ) -> InternalActionResult:
+        nonlocal handler_calls
+        handler_calls += 1
+        return InternalActionResult(summary="completed once", changed=False)
+
+    class FailingMemoryService(MemoryService):
+        async def record_event(self, **_kwargs):
+            raise PersistenceError("Injected memory failure")
+
+    registry = ActionRegistry(
+        [
+            recommendation_definition(
+                handler,
+                policy=PolicyDecision.APPROVAL_REQUIRED,
+                required_role=UserRole.REVIEWER,
+            )
+        ]
+    )
+    service = ActionService(db_session, registry=registry)
+    pending = await service.propose(
+        agent_run_id=run.agent_run_id,
+        agent_name=AgentName.BRIEF_ANALYST,
+        proposal=proposal(
+            "create_internal_recommendation",
+            workflow,
+            recommendation="Durable memory",
+        ),
+    )
+    reviewer = AuthenticatedActor(actor_id="reviewer-memory", role=UserRole.REVIEWER)
+    approved = await service.approve(
+        pending.action_request.action_request_id,
+        actor=reviewer,
+        expected_version=pending.action_request.version,
+    )
+    service.executor.memories = FailingMemoryService(db_session)
+    completed = await service.execute(
+        approved.action_request_id,
+        actor=reviewer,
+        expected_version=approved.version,
+    )
+    assert completed.status == ActionExecutionStatus.COMPLETED
+    assert completed.memory_record_status == MemoryRecordStatus.FAILED
+    assert handler_calls == 1
+
+    service.executor.memories = MemoryService(db_session)
+    first = await service.reconcile_pending_action_memories()
+    second = await service.reconcile_pending_action_memories()
+    duplicate = await MemoryService(db_session).record_event(
+        campaign_id=workflow.campaign_id,
+        workflow_id=workflow.workflow_id,
+        agent_run_id=run.agent_run_id,
+        action_request_id=approved.action_request_id,
+        action_execution_id=completed.action_execution_id,
+        event_type=MemoryEventType.ACTION_COMPLETED,
+        summary="Duplicate reconciliation is idempotent",
+    )
+    memories = (
+        (
+            await db_session.execute(
+                select(AgentMemoryEntryModel).where(
+                    AgentMemoryEntryModel.action_execution_id
+                    == completed.action_execution_id,
+                    AgentMemoryEntryModel.event_type
+                    == MemoryEventType.ACTION_COMPLETED.value,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert first[0].memory_record_status == MemoryRecordStatus.RECORDED
+    assert second == []
+    assert len(memories) == 1
+    assert duplicate.memory_entry_id == memories[0].memory_entry_id
+    assert handler_calls == 1
 
 
 @pytest.mark.asyncio
