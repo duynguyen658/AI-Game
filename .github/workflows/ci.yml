@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feature/repository-layer
+      - agentic-core
   pull_request:
     branches:
       - main

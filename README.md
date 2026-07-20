@@ -1,7 +1,7 @@
 # Cyber Legends AI Workflow Backend
 
-Production-oriented FastAPI backend for a deterministic AI-assisted campaign workflow.
-This milestone intentionally excludes Agentic AI. The application controls workflow
+Production-oriented FastAPI backend with a deterministic campaign workflow and a
+bounded, observable Agentic Core. The application remains authoritative for workflow
 state, retries, approval decisions, persistence, authorization, and audit history.
 
 ## Architecture
@@ -10,10 +10,21 @@ state, retries, approval decisions, persistence, authorization, and audit histor
 FastAPI Router
 -> Application Service
 -> Deterministic Workflow
--> LLM Client when required
+-> Agentic Orchestrator
+-> Specialist Agent
+-> Bounded Agent Loop
+-> Read-only Tools
+-> Application Service
 -> Repository
 -> PostgreSQL
 ```
+
+The three M4 specialists are `BRIEF_ANALYST`, `CONTENT_GENERATOR`, and
+`CONTENT_REVIEWER`. Agents acquire bounded context, may request only their allowlisted
+read-only tools, and return validated `BriefAnalysis`, `GeneratedContent`, or
+`QualityReview` objects. Agents do not control workflow states, approve campaigns, or
+publish content; the deterministic workflow interprets reviewer recommendations and
+persists all campaign artifacts.
 
 Approval requests follow:
 
@@ -68,13 +79,40 @@ Useful endpoints:
 - `POST /workflows/campaigns/{campaign_id}`
 - `POST /workflows/{workflow_id}/run`
 - `POST /approvals`
+- `GET /agent-runs`
+- `GET /agent-runs/{agent_run_id}`
+- `GET /agent-runs/{agent_run_id}/tool-calls`
+- `GET /workflows/{workflow_id}/agent-runs`
+- `GET /campaigns/{campaign_id}/agent-runs`
 
 ## Workflow Behavior
 
 `POST /workflows/{workflow_id}/run` executes a deterministic synchronous workflow
 with short database checkpoints. Database rows are not locked while an LLM call is
 running. The app reserves an LLM call, commits that counter, calls the configured
-LLM client, then locks the rows again before persisting the result.
+Agent loop, then locks the rows again before persisting the result. Each Agent LLM
+turn also reserves the workflow-level LLM count, so Agent budgets cannot bypass the
+M3 workflow limit.
+
+## Agent Runtime
+
+Each specialist run is bounded by `AGENT_MAX_ITERATIONS`, `AGENT_MAX_LLM_CALLS`,
+`AGENT_MAX_TOOL_CALLS`, and `AGENT_TIMEOUT_SECONDS`. Execution stops on validated
+final output, a provider or validation failure, timeout, or any exhausted limit.
+There is no recursive or unbounded loop.
+
+M4 tools expose only campaign/workflow snapshots and existing artifacts. Inputs are
+schema validated and scoped to the run's campaign/workflow; outputs are sanitized,
+treated as untrusted, and truncated to `AGENT_MAX_TOOL_RESULT_CHARACTERS`. There are
+no shell, filesystem, network, or write-capable Agent tools.
+
+Every specialist execution creates an `agent_runs` audit row with prompt version and
+counters. Every attempted tool execution creates an `agent_tool_calls` row with
+sanitized arguments, bounded result summary, status, duration, and safe error fields.
+Prompts and hidden reasoning are not persisted.
+
+`MockLLMClient` supports `scripted_turns` containing `AgentTurn` values for fully
+deterministic tool-call/final-output tests. Default tests never contact a real LLM.
 
 Content generation is retried only for bounded review failures:
 
@@ -159,23 +197,11 @@ Production rejects unsafe `change-me` secrets. The mock LLM provider requires no
 key and is the default for tests. Real OpenAI usage requires `LLM_PROVIDER=openai`,
 `LLM_API_KEY`, and `LLM_MODEL`.
 
-## Current Limitations
+## Current Limitations and M5
 
-M3 keeps workflow execution synchronous. It does not include queues, background
-workers, publication integrations, or Agentic AI orchestration. Manual review
-resolution from `MANUAL_REVIEW_REQUIRED` remains a future explicit product flow.
-
-## Deferred Agentic AI Work
-
-Deferred to a later milestone:
-
-- Agent runtime
-- LLM agents
-- Supervisor agent
-- Tool registry and tool execution
-- Agent policy engine
-- Agent memory
-- Vector search and retrieval
-- Autonomous planning
-- MCP integration
-- Multi-agent collaboration
+M4 keeps execution synchronous and has no long-term, episodic, or semantic memory.
+All tools are read-only. It does not include queues, controlled write actions, a policy
+engine, human approval for tools, vector retrieval, autonomous publication,
+supervisor delegation, external integrations, or advanced evaluation/tracing. Those
+safety, action, and memory capabilities remain deferred to M5 or later. Manual review
+resolution from `MANUAL_REVIEW_REQUIRED` also remains a future explicit product flow.
