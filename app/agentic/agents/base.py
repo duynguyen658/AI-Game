@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from app.agentic.state.campaign_context import CampaignContext
 from app.core.constants import AgentName
 from app.llm.agent_turn import AgentMessage
+from app.schemas.action_request import AgentActionProposal
 
 OutputT = TypeVar("OutputT", bound=BaseModel)
 PROMPT_DIRECTORY = Path(__file__).resolve().parent.parent / "prompts"
@@ -19,13 +20,21 @@ class BaseSpecialistAgent(ABC, Generic[OutputT]):
     name: AgentName
     output_schema: type[OutputT]
     allowed_tool_names: frozenset[str]
-    prompt_version = "m4-v1"
+    prompt_version = "m5-v1"
     prompt_file: str
 
     def build_system_prompt(self) -> str:
         prompt = (PROMPT_DIRECTORY / self.prompt_file).read_text(encoding="utf-8")
         schema = json.dumps(self.output_schema.model_json_schema(), ensure_ascii=True)
-        return f"{prompt}\n\nFINAL_OUTPUT_JSON_SCHEMA:\n{schema}"
+        action_schema = json.dumps(
+            AgentActionProposal.model_json_schema(), ensure_ascii=True
+        )
+        return (
+            f"{prompt}\n\nFINAL_OUTPUT_JSON_SCHEMA:\n{schema}"
+            "\n\nYou may add an optional top-level action_proposals array. "
+            "A proposal is not permission and must contain only a short operational "
+            f"summary, never hidden reasoning.\nACTION_PROPOSAL_JSON_SCHEMA:\n{action_schema}"
+        )
 
     def build_initial_messages(self, context: CampaignContext) -> list[AgentMessage]:
         payload = json.dumps(context.model_dump(mode="json"), ensure_ascii=True)

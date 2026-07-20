@@ -123,12 +123,14 @@ class OpenAILLMClient:
             )
         try:
             payload = json.loads(message.content or "")
+            proposals = payload.pop("action_proposals", [])
             validated = output_schema.model_validate(payload)
-        except (json.JSONDecodeError, ValueError) as exc:
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
             raise LLMResponseError("LLM returned invalid agent output") from exc
         return AgentTurn(
             assistant_text=None,
             final_output=validated.model_dump(mode="json"),
+            action_proposals=proposals,
             usage=(
                 LLMUsage(
                     input_tokens=usage.prompt_tokens,

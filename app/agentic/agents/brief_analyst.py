@@ -6,5 +6,7 @@ from app.schemas.campaign import BriefAnalysis
 class BriefAnalystAgent(BaseSpecialistAgent[BriefAnalysis]):
     name = AgentName.BRIEF_ANALYST
     output_schema = BriefAnalysis
-    allowed_tool_names = frozenset({"get_previous_workflow_summary"})
+    allowed_tool_names = frozenset(
+        {"get_previous_workflow_summary", "get_recent_campaign_memories"}
+    )
     prompt_file = "brief_analyst.md"
