@@ -45,20 +45,25 @@ class ApprovalService:
             request.campaign_id
         )
         if campaign is None:
+            await self.session.rollback()
             raise CampaignNotFoundError("Campaign not found")
         workflow = await self.workflow_repository.get_by_id_for_update(
             request.workflow_id
         )
         if workflow is None or workflow.campaign_id != request.campaign_id:
+            await self.session.rollback()
             raise WorkflowNotFoundError("Workflow not found")
-        if CampaignStatus(workflow.status) != CampaignStatus.PENDING_APPROVAL:
-            raise ApprovalNotAllowedError("Workflow is not pending approval")
-        if campaign.version != request.expected_version:
-            raise VersionConflictError("Campaign version does not match")
         if await self.approval_repository.has_final_decision(request.workflow_id):
+            await self.session.rollback()
             raise ApprovalAlreadyDecidedError(
                 "Workflow already has an approval decision"
             )
+        if CampaignStatus(workflow.status) != CampaignStatus.PENDING_APPROVAL:
+            await self.session.rollback()
+            raise ApprovalNotAllowedError("Workflow is not pending approval")
+        if campaign.version != request.expected_version:
+            await self.session.rollback()
+            raise VersionConflictError("Campaign version does not match")
 
         previous_version = campaign.version
         resulting_version = previous_version

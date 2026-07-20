@@ -92,7 +92,8 @@ class WorkflowRunModel(Base):
         ),
         CheckConstraint("retry_count >= 0", name="ck_workflow_retry_count_nonnegative"),
         CheckConstraint(
-            "revision_number >= 0", name="ck_workflow_revision_nonnegative"
+            "revision_number >= 0",
+            name="ck_workflow_runs_revision_number_non_negative",
         ),
         CheckConstraint(
             "quality_score IS NULL OR (quality_score >= 0 AND quality_score <= 100)",

@@ -11,13 +11,16 @@ from app.core.exceptions import (
     CampaignNotFoundError,
     DatabaseUnavailableError,
     InvalidStateTransitionError,
+    LLMProviderError,
+    LLMResponseError,
+    LLMTimeoutError,
+    PersistenceError,
     VersionConflictError,
     WorkflowAlreadyActiveError,
     WorkflowCreationNotAllowedError,
     WorkflowExecutionError,
     WorkflowLimitError,
     WorkflowNotFoundError,
-    PersistenceError,
 )
 
 ERROR_STATUS_MAP: dict[type[ApplicationError], int] = {
@@ -34,6 +37,9 @@ ERROR_STATUS_MAP: dict[type[ApplicationError], int] = {
     VersionConflictError: status.HTTP_409_CONFLICT,
     WorkflowLimitError: status.HTTP_409_CONFLICT,
     DatabaseUnavailableError: status.HTTP_503_SERVICE_UNAVAILABLE,
+    LLMProviderError: status.HTTP_500_INTERNAL_SERVER_ERROR,
+    LLMResponseError: status.HTTP_500_INTERNAL_SERVER_ERROR,
+    LLMTimeoutError: status.HTTP_500_INTERNAL_SERVER_ERROR,
     WorkflowExecutionError: status.HTTP_500_INTERNAL_SERVER_ERROR,
     PersistenceError: status.HTTP_500_INTERNAL_SERVER_ERROR,
 }

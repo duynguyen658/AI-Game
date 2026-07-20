@@ -215,13 +215,13 @@ class CampaignWorkflow:
             raise wrapped from exc
 
     async def _load_snapshot(self, workflow_id: UUID) -> WorkflowSnapshot:
-        workflow = await self.workflow_repository.get_by_id_for_update(workflow_id)
+        # Snapshot reads intentionally avoid FOR UPDATE. LLM calls happen after this
+        # read transaction is closed; write checkpoints reacquire Campaign -> Workflow.
+        workflow = await self.workflow_repository.get_by_id(workflow_id)
         if workflow is None:
             await self.session.rollback()
             raise WorkflowNotFoundError("Workflow not found")
-        campaign = await self.campaign_repository.get_by_id_for_update(
-            workflow.campaign_id
-        )
+        campaign = await self.campaign_repository.get_by_id(workflow.campaign_id)
         if campaign is None:
             await self.session.rollback()
             raise CampaignNotFoundError("Campaign not found")

@@ -15,6 +15,7 @@ from app.core.constants import (
 )
 from app.core.exceptions import (
     CampaignNotFoundError,
+    InvalidStateTransitionError,
     PersistenceError,
     WorkflowAlreadyActiveError,
     WorkflowCreationNotAllowedError,
@@ -41,6 +42,7 @@ class WorkflowService:
     async def create_workflow(self, campaign_id: str) -> WorkflowRun:
         campaign = await self.campaign_repository.get_by_id_for_update(campaign_id)
         if campaign is None:
+            await self.session.rollback()
             raise CampaignNotFoundError("Campaign not found")
         campaign_status = CampaignStatus(campaign.status)
         if campaign_status not in WORKFLOW_CREATABLE_CAMPAIGN_STATUSES:
@@ -104,6 +106,7 @@ class WorkflowService:
     ) -> WorkflowRun:
         workflow_hint = await self.workflow_repository.get_by_id(workflow_id)
         if workflow_hint is None:
+            await self.session.rollback()
             raise WorkflowNotFoundError("Workflow not found")
         campaign = await self.campaign_repository.get_by_id_for_update(
             workflow_hint.campaign_id
@@ -114,7 +117,11 @@ class WorkflowService:
         if workflow is None or workflow.campaign_id != campaign.campaign_id:
             await self.session.rollback()
             raise WorkflowNotFoundError("Workflow not found")
-        ensure_valid_transition(CampaignStatus(workflow.status), next_status)
+        try:
+            ensure_valid_transition(CampaignStatus(workflow.status), next_status)
+        except InvalidStateTransitionError:
+            await self.session.rollback()
+            raise
         await self.workflow_repository.update_status(workflow, next_status)
         await self.campaign_repository.update_status(campaign, next_status)
         if step is not None:
@@ -123,10 +130,22 @@ class WorkflowService:
         return workflow_to_schema(workflow)
 
     async def record_llm_call(self, workflow_id: UUID) -> None:
+        workflow_hint = await self.workflow_repository.get_by_id(workflow_id)
+        if workflow_hint is None:
+            await self.session.rollback()
+            raise WorkflowNotFoundError("Workflow not found")
+        campaign = await self.campaign_repository.get_by_id_for_update(
+            workflow_hint.campaign_id
+        )
+        if campaign is None:
+            await self.session.rollback()
+            raise CampaignNotFoundError("Campaign not found")
         workflow = await self.workflow_repository.get_by_id_for_update(workflow_id)
-        if workflow is None:
+        if workflow is None or workflow.campaign_id != campaign.campaign_id:
+            await self.session.rollback()
             raise WorkflowNotFoundError("Workflow not found")
         if workflow.llm_call_count >= self.settings.max_llm_calls_per_workflow:
+            await self.session.rollback()
             raise WorkflowLimitError("LLM call budget exhausted")
         await self.workflow_repository.increment_llm_call_count(workflow)
-        await self.session.flush()
+        await self.session.commit()

@@ -26,16 +26,24 @@ class CampaignStatus(StrEnum):
     FAILED = "FAILED"
 
 
-ACTIVE_WORKFLOW_STATUS_VALUES = (
-    CampaignStatus.RECEIVED.value,
-    CampaignStatus.VALIDATING.value,
-    CampaignStatus.NEEDS_CLARIFICATION.value,
-    CampaignStatus.ANALYZING.value,
-    CampaignStatus.GENERATING.value,
-    CampaignStatus.REVIEWING.value,
-    CampaignStatus.MANUAL_REVIEW_REQUIRED.value,
-    CampaignStatus.PENDING_APPROVAL.value,
-    CampaignStatus.REVISION_REQUIRED.value,
+_ACTIVE_WORKFLOW_STATUS_SEQUENCE = (
+    CampaignStatus.RECEIVED,
+    CampaignStatus.VALIDATING,
+    CampaignStatus.NEEDS_CLARIFICATION,
+    CampaignStatus.ANALYZING,
+    CampaignStatus.GENERATING,
+    CampaignStatus.REVIEWING,
+    CampaignStatus.MANUAL_REVIEW_REQUIRED,
+    CampaignStatus.PENDING_APPROVAL,
+    CampaignStatus.REVISION_REQUIRED,
+)
+
+ACTIVE_WORKFLOW_STATUSES: frozenset[CampaignStatus] = frozenset(
+    _ACTIVE_WORKFLOW_STATUS_SEQUENCE
+)
+
+ACTIVE_WORKFLOW_STATUS_VALUES = tuple(
+    status.value for status in _ACTIVE_WORKFLOW_STATUS_SEQUENCE
 )
 
 

@@ -8,13 +8,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import (
-    ACTIVE_WORKFLOW_STATUS_VALUES,
+    ACTIVE_WORKFLOW_STATUSES,
     CampaignStatus,
     WorkflowStep,
 )
 from app.database.models import WorkflowRunModel
-
-ACTIVE_WORKFLOW_STATUSES = set(ACTIVE_WORKFLOW_STATUS_VALUES)
 
 
 class WorkflowRepository:
@@ -30,6 +28,8 @@ class WorkflowRepository:
         parent_workflow_id: UUID | None = None,
         revision_number: int = 0,
     ) -> WorkflowRunModel:
+        if revision_number < 0:
+            raise ValueError("revision_number must be non-negative")
         model = WorkflowRunModel(
             campaign_id=campaign_id,
             parent_workflow_id=parent_workflow_id,
