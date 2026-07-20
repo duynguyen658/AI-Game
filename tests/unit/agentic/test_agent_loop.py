@@ -1,3 +1,4 @@
+import asyncio
 from datetime import date
 from uuid import uuid4
 
@@ -7,11 +8,17 @@ from app.agentic.agents.brief_analyst import BriefAnalystAgent
 from app.agentic.runtime.agent_loop import AgentLoop
 from app.agentic.runtime.execution_budget import AgentExecutionBudget
 from app.agentic.state.agent_state import AgentState
-from app.agentic.state.campaign_context import CampaignContext
+from app.agentic.state.campaign_context import BriefAnalysisContext, CampaignContext
 from app.agentic.tools.executor import ToolExecutor
-from app.agentic.tools.registry import build_default_tool_registry
-from app.core.constants import AgentName, CampaignStatus
-from app.core.exceptions import AgentOutputValidationError, AgentToolCallLimitError
+from app.agentic.tools.campaign_tools import WorkflowToolInput
+from app.agentic.tools.definitions import ToolDefinition
+from app.agentic.tools.registry import ToolRegistry, build_default_tool_registry
+from app.core.constants import AgentName, CampaignStatus, ToolCallStatus
+from app.core.exceptions import (
+    AgentOutputValidationError,
+    AgentTimeoutError,
+    AgentToolCallLimitError,
+)
 from app.llm.agent_turn import AgentToolRequest, AgentTurn
 from app.llm.mock_client import MockLLMClient
 from app.schemas.tool_call import ToolCallRead
@@ -21,6 +28,7 @@ class FakeRunService:
     def __init__(self) -> None:
         self.iterations = 0
         self.llm_calls = 0
+        self.tool_finishes: list[ToolCallStatus] = []
 
     async def record_iteration(self, agent_run_id):
         self.iterations += 1
@@ -35,11 +43,22 @@ class FakeRunService:
         return None
 
     async def finish_tool_call(self, tool_call_id, **kwargs):
-        return None
+        self.tool_finishes.append(kwargs["status"])
 
 
-def build_context() -> CampaignContext:
-    return CampaignContext(
+class FakeQueryService:
+    async def get_previous_workflow_summary(self, **kwargs):
+        return {"available": False}
+
+    async def get_previous_quality_review(self, **kwargs):
+        return {"available": False}
+
+    async def get_previous_revision(self, **kwargs):
+        return {"available": False}
+
+
+def build_context() -> BriefAnalysisContext:
+    return BriefAnalysisContext(
         campaign_id="CL-LOOP",
         workflow_id=uuid4(),
         revision_number=0,
@@ -59,7 +78,7 @@ def build_context() -> CampaignContext:
 
 
 def build_loop(client, service, reserve):
-    registry = build_default_tool_registry()
+    registry = build_default_tool_registry(FakeQueryService())
     return AgentLoop(
         llm_client=client,
         registry=registry,
@@ -93,8 +112,11 @@ async def test_loop_executes_tool_then_returns_validated_output() -> None:
                 tool_calls=[
                     AgentToolRequest(
                         tool_call_id="call-1",
-                        tool_name="get_campaign",
-                        arguments={"campaign_id": context.campaign_id},
+                        tool_name="get_previous_workflow_summary",
+                        arguments={
+                            "campaign_id": context.campaign_id,
+                            "workflow_id": context.workflow_id,
+                        },
                     )
                 ]
             ),
@@ -164,8 +186,11 @@ async def test_loop_checks_total_tool_budget_before_execution() -> None:
     requests = [
         AgentToolRequest(
             tool_call_id=f"call-{index}",
-            tool_name="get_campaign",
-            arguments={"campaign_id": context.campaign_id},
+            tool_name="get_previous_workflow_summary",
+            arguments={
+                "campaign_id": context.campaign_id,
+                "workflow_id": context.workflow_id,
+            },
         )
         for index in range(2)
     ]
@@ -181,3 +206,71 @@ async def test_loop_checks_total_tool_budget_before_execution() -> None:
                 max_iterations=2, max_llm_calls=2, max_tool_calls=1, timeout_seconds=10
             ),
         )
+
+
+@pytest.mark.asyncio
+async def test_outer_agent_timeout_finalizes_running_tool_call() -> None:
+    context = build_context()
+    started = asyncio.Event()
+
+    async def blocking_read(_: CampaignContext, __) -> object:
+        started.set()
+        await asyncio.Event().wait()
+        return {"unreachable": True}
+
+    registry = ToolRegistry(
+        [
+            ToolDefinition(
+                name="blocking_read",
+                description="Blocking read for timeout test.",
+                input_model=WorkflowToolInput,
+                handler=blocking_read,
+            )
+        ],
+        {AgentName.BRIEF_ANALYST: frozenset({"blocking_read"})},
+    )
+    client = MockLLMClient(
+        scripted_turns=[
+            AgentTurn(
+                tool_calls=[
+                    AgentToolRequest(
+                        tool_call_id="outer-timeout",
+                        tool_name="blocking_read",
+                        arguments={
+                            "campaign_id": context.campaign_id,
+                            "workflow_id": context.workflow_id,
+                        },
+                    )
+                ]
+            )
+        ]
+    )
+    service = FakeRunService()
+
+    async def reserve() -> None:
+        return None
+
+    loop = AgentLoop(
+        llm_client=client,
+        registry=registry,
+        executor=ToolExecutor(registry, service, max_result_characters=1000),
+        run_service=service,
+        reserve_workflow_llm_call=reserve,
+    )
+    task = asyncio.create_task(
+        loop.run(
+            agent=BriefAnalystAgent(),
+            state=build_state(context),
+            context=context,
+            budget=AgentExecutionBudget(
+                max_iterations=2,
+                max_llm_calls=2,
+                max_tool_calls=1,
+                timeout_seconds=1,
+            ),
+        )
+    )
+    await started.wait()
+    with pytest.raises(AgentTimeoutError):
+        await task
+    assert service.tool_finishes == [ToolCallStatus.FAILED]

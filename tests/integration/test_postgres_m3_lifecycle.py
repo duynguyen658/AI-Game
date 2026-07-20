@@ -1249,16 +1249,19 @@ async def test_agentic_happy_path_persists_runs_tools_and_query_api(
     )
     client = MockLLMClient(
         scripted_turns=[
+            AgentTurn(final_output=analysis.model_dump(mode="json")),
             AgentTurn(
                 tool_calls=[
                     AgentToolRequest(
-                        tool_call_id="brief-campaign",
-                        tool_name="get_campaign",
-                        arguments={"campaign_id": campaign_id},
+                        tool_call_id="generator-previous-review",
+                        tool_name="get_previous_quality_review",
+                        arguments={
+                            "campaign_id": campaign_id,
+                            "workflow_id": workflow.workflow_id,
+                        },
                     )
                 ]
             ),
-            AgentTurn(final_output=analysis.model_dump(mode="json")),
             AgentTurn(final_output=generated_content().model_dump(mode="json")),
             AgentTurn(final_output=review("PASS").model_dump(mode="json")),
         ]
@@ -1286,16 +1289,21 @@ async def test_agentic_happy_path_persists_runs_tools_and_query_api(
         AgentName.CONTENT_GENERATOR.value,
         AgentName.CONTENT_REVIEWER.value,
     ]
-    assert [run.llm_call_count for run in runs] == [2, 1, 1]
+    assert [run.llm_call_count for run in runs] == [1, 2, 1]
     assert all(run.status == AgentRunStatus.COMPLETED.value for run in runs)
     tool_calls = (await db_session.execute(select(AgentToolCallModel))).scalars().all()
     assert len(tool_calls) == 1
     assert tool_calls[0].status == "COMPLETED"
 
-    response = await api_client.get(f"/workflows/{workflow.workflow_id}/agent-runs")
+    audit_headers = {"x-actor-id": "reviewer-1", "x-actor-role": "reviewer"}
+    response = await api_client.get(
+        f"/workflows/{workflow.workflow_id}/agent-runs", headers=audit_headers
+    )
     assert response.status_code == 200
     assert len(response.json()) == 3
-    response = await api_client.get(f"/agent-runs/{runs[0].agent_run_id}/tool-calls")
+    response = await api_client.get(
+        f"/agent-runs/{runs[1].agent_run_id}/tool-calls", headers=audit_headers
+    )
     assert response.status_code == 200
     assert len(response.json()) == 1
 
@@ -1307,13 +1315,22 @@ async def test_agent_iteration_limit_persists_run_and_workflow_failure(
     campaign_id = "CL-M4-LIMIT"
     await create_campaign(db_session, campaign_id)
     workflow = await WorkflowService(db_session).create_workflow(campaign_id)
-    turns = [
+    analysis = BriefAnalysis(
+        summary="Campaign summary",
+        campaign_objective="Drive pre-registration",
+        target_audience="18-30",
+        main_message="Register now",
+    )
+    turns = [AgentTurn(final_output=analysis.model_dump(mode="json"))] + [
         AgentTurn(
             tool_calls=[
                 AgentToolRequest(
                     tool_call_id=f"campaign-{index}",
-                    tool_name="get_campaign",
-                    arguments={"campaign_id": campaign_id},
+                    tool_name="get_previous_quality_review",
+                    arguments={
+                        "campaign_id": campaign_id,
+                        "workflow_id": workflow.workflow_id,
+                    },
                 )
             ]
         )
@@ -1327,9 +1344,9 @@ async def test_agent_iteration_limit_persists_run_and_workflow_failure(
 
     run = (
         await db_session.execute(
-            select(AgentRunModel).where(
-                AgentRunModel.workflow_id == workflow.workflow_id
-            )
+            select(AgentRunModel)
+            .where(AgentRunModel.workflow_id == workflow.workflow_id)
+            .where(AgentRunModel.status == AgentRunStatus.LIMIT_EXCEEDED.value)
         )
     ).scalar_one()
     await db_session.refresh(run)
