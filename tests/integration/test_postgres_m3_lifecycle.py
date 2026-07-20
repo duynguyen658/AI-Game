@@ -26,7 +26,7 @@ from app.core.exceptions import (
     WorkflowCreationNotAllowedError,
     WorkflowLimitError,
 )
-from app.database.models import ApprovalRecordModel, WorkflowRunModel
+from app.database.models import ApprovalRecordModel, CampaignModel, WorkflowRunModel
 from app.database.session import AsyncSessionLocal
 from app.llm.mock_client import MockLLMClient
 from app.repositories.approval_repository import ApprovalRepository
@@ -196,6 +196,26 @@ async def approval_count(session: AsyncSession, workflow_id: UUID) -> int:
         .where(ApprovalRecordModel.workflow_id == workflow_id)
     )
     return result.scalar_one()
+
+
+async def assert_campaign_and_workflow_rows_are_not_locked(
+    campaign_id: str,
+    workflow_id: UUID,
+) -> None:
+    async with AsyncSessionLocal() as lock_session:
+        campaign_result = await lock_session.execute(
+            select(CampaignModel)
+            .where(CampaignModel.campaign_id == campaign_id)
+            .with_for_update(nowait=True)
+        )
+        workflow_result = await lock_session.execute(
+            select(WorkflowRunModel)
+            .where(WorkflowRunModel.workflow_id == workflow_id)
+            .with_for_update(nowait=True)
+        )
+        assert campaign_result.scalar_one().campaign_id == campaign_id
+        assert workflow_result.scalar_one().workflow_id == workflow_id
+        await lock_session.rollback()
 
 
 @pytest.mark.asyncio
@@ -782,6 +802,67 @@ async def test_concurrent_approval_one_decision_succeeds(
 
 
 @pytest.mark.asyncio
+async def test_concurrent_workflow_execution_and_state_change_conflict() -> None:
+    async with AsyncSessionLocal() as setup_session:
+        await create_campaign(setup_session, "CL-CONCURRENT-RUN")
+        workflow = await WorkflowService(setup_session).create_workflow(
+            "CL-CONCURRENT-RUN"
+        )
+        await WorkflowService(setup_session).transition(
+            workflow.workflow_id,
+            CampaignStatus.VALIDATING,
+            step=WorkflowStep.VALIDATE_INPUT,
+        )
+        await WorkflowService(setup_session).transition(
+            workflow.workflow_id,
+            CampaignStatus.ANALYZING,
+            step=WorkflowStep.ANALYZE_BRIEF,
+        )
+
+    llm_entered = asyncio.Event()
+    release_llm = asyncio.Event()
+
+    class BlockingAnalysisLLM(MockLLMClient):
+        async def generate_structured(self, **kwargs):
+            llm_entered.set()
+            await release_llm.wait()
+            return await super().generate_structured(**kwargs)
+
+    async with AsyncSessionLocal() as workflow_session:
+        runner_task = asyncio.create_task(
+            CampaignWorkflow(
+                workflow_session,
+                BlockingAnalysisLLM(),
+            ).run_to_pending_approval(workflow.workflow_id)
+        )
+        await llm_entered.wait()
+
+        async with AsyncSessionLocal() as competing_session:
+            await WorkflowService(competing_session).transition(
+                workflow.workflow_id,
+                CampaignStatus.FAILED,
+                step=WorkflowStep.COMPLETE,
+            )
+
+        release_llm.set()
+        with pytest.raises(VersionConflictError):
+            await runner_task
+
+    async with AsyncSessionLocal() as verify_session:
+        campaign = await CampaignRepository(verify_session).get_by_id(
+            "CL-CONCURRENT-RUN"
+        )
+        workflow_model = await WorkflowRepository(verify_session).get_by_id(
+            workflow.workflow_id
+        )
+        assert campaign is not None
+        assert workflow_model is not None
+        assert campaign.status == CampaignStatus.FAILED.value
+        assert workflow_model.status == CampaignStatus.FAILED.value
+        assert workflow_model.error_code is None
+
+
+@pytest.mark.asyncio
 async def test_workflow_happy_path_manual_review_and_retry_exhaustion(
     db_session: AsyncSession,
 ) -> None:
@@ -937,6 +1018,10 @@ async def test_workflow_does_not_hold_transaction_during_llm_calls(
     class TransactionCheckingLLM(MockLLMClient):
         async def generate_structured(self, **kwargs):
             assert not db_session.in_transaction()
+            await assert_campaign_and_workflow_rows_are_not_locked(
+                "CL-NO-TX",
+                workflow.workflow_id,
+            )
             return await super().generate_structured(**kwargs)
 
     result = await CampaignWorkflow(
