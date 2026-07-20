@@ -47,6 +47,12 @@ class Settings(BaseSettings):
     max_content_retries: int = Field(default=2, ge=0, le=5)
     max_input_characters: int = Field(default=20_000, ge=100)
 
+    agent_max_iterations: int = Field(default=5, ge=1, le=20)
+    agent_max_llm_calls: int = Field(default=5, ge=1, le=20)
+    agent_max_tool_calls: int = Field(default=8, ge=0, le=50)
+    agent_timeout_seconds: int = Field(default=90, ge=1, le=300)
+    agent_max_tool_result_characters: int = Field(default=12_000, ge=100, le=50_000)
+
     log_level: str = "INFO"
 
     @field_validator("database_url")

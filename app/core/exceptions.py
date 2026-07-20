@@ -80,3 +80,55 @@ class DatabaseUnavailableError(ApplicationError):
 
 class PersistenceError(ApplicationError):
     error_code = "PERSISTENCE_ERROR"
+
+
+class AgentRunNotFoundError(ApplicationError):
+    error_code = "AGENT_RUN_NOT_FOUND"
+
+
+class AgentRunAlreadyActiveError(ApplicationError):
+    error_code = "AGENT_RUN_ALREADY_ACTIVE"
+
+
+class AgentExecutionError(ApplicationError):
+    error_code = "AGENT_EXECUTION_ERROR"
+
+
+class AgentOutputValidationError(AgentExecutionError):
+    error_code = "AGENT_OUTPUT_VALIDATION_ERROR"
+
+
+class AgentIterationLimitError(AgentExecutionError):
+    error_code = "AGENT_ITERATION_LIMIT"
+
+
+class AgentLLMCallLimitError(AgentExecutionError):
+    error_code = "AGENT_LLM_CALL_LIMIT"
+
+
+class AgentToolCallLimitError(AgentExecutionError):
+    error_code = "AGENT_TOOL_CALL_LIMIT"
+
+
+class AgentTimeoutError(AgentExecutionError):
+    error_code = "AGENT_TIMEOUT"
+
+
+class ToolNotFoundError(AgentExecutionError):
+    error_code = "TOOL_NOT_FOUND"
+
+
+class ToolNotAllowedError(AgentExecutionError):
+    error_code = "TOOL_NOT_ALLOWED"
+
+
+class ToolInputValidationError(AgentExecutionError):
+    error_code = "TOOL_INPUT_VALIDATION_ERROR"
+
+
+class ToolExecutionError(AgentExecutionError):
+    error_code = "TOOL_EXECUTION_ERROR"
+
+
+class AgentContextError(AgentExecutionError):
+    error_code = "AGENT_CONTEXT_ERROR"

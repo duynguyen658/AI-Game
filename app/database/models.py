@@ -21,6 +21,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.constants import (
     ACTIVE_WORKFLOW_STATUS_VALUES,
+    AgentRunStatus,
     CampaignStatus,
     WorkflowStep,
 )
@@ -82,6 +83,7 @@ class CampaignModel(Base):
         back_populates="campaign",
         cascade="all, delete-orphan",
     )
+    agent_runs: Mapped[list[AgentRunModel]] = relationship(back_populates="campaign")
 
 
 class WorkflowRunModel(Base):
@@ -165,6 +167,110 @@ class WorkflowRunModel(Base):
         back_populates="workflow_run",
         cascade="all, delete-orphan",
     )
+    agent_runs: Mapped[list[AgentRunModel]] = relationship(
+        back_populates="workflow_run"
+    )
+
+
+class AgentRunModel(Base):
+    __tablename__ = "agent_runs"
+    __table_args__ = (
+        CheckConstraint(
+            "iteration_count >= 0", name="ck_agent_runs_iteration_count_nonnegative"
+        ),
+        CheckConstraint(
+            "llm_call_count >= 0", name="ck_agent_runs_llm_call_count_nonnegative"
+        ),
+        CheckConstraint(
+            "tool_call_count >= 0", name="ck_agent_runs_tool_call_count_nonnegative"
+        ),
+        CheckConstraint(
+            "(status IN ('COMPLETED', 'FAILED', 'LIMIT_EXCEEDED') AND completed_at IS NOT NULL) "
+            "OR (status IN ('CREATED', 'RUNNING') AND completed_at IS NULL)",
+            name="ck_agent_runs_completed_at_consistency",
+        ),
+        Index("ix_agent_runs_workflow_started_at", "workflow_id", "started_at"),
+        Index(
+            "uq_agent_runs_one_active_specialist",
+            "workflow_id",
+            "agent_name",
+            unique=True,
+            postgresql_where=text("status IN ('CREATED', 'RUNNING')"),
+        ),
+    )
+
+    agent_run_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    workflow_id: Mapped[UUID] = mapped_column(
+        ForeignKey("workflow_runs.workflow_id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    campaign_id: Mapped[str] = mapped_column(
+        ForeignKey("campaigns.campaign_id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    agent_name: Mapped[str] = mapped_column(String(50), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(50), nullable=False, default=AgentRunStatus.CREATED.value, index=True
+    )
+    model: Mapped[str | None] = mapped_column(String(200))
+    prompt_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    iteration_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    llm_call_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    tool_call_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_code: Mapped[str | None] = mapped_column(String(100))
+    error_message: Mapped[str | None] = mapped_column(Text)
+
+    workflow_run: Mapped[WorkflowRunModel] = relationship(back_populates="agent_runs")
+    campaign: Mapped[CampaignModel] = relationship(back_populates="agent_runs")
+    tool_calls: Mapped[list[AgentToolCallModel]] = relationship(
+        back_populates="agent_run"
+    )
+
+
+class AgentToolCallModel(Base):
+    __tablename__ = "agent_tool_calls"
+    __table_args__ = (
+        CheckConstraint(
+            "duration_ms IS NULL OR duration_ms >= 0",
+            name="ck_agent_tool_calls_duration_nonnegative",
+        ),
+        Index("ix_agent_tool_calls_run_started_at", "agent_run_id", "started_at"),
+    )
+
+    tool_call_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    agent_run_id: Mapped[UUID] = mapped_column(
+        ForeignKey("agent_runs.agent_run_id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    tool_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    status: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    arguments: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )
+    result_summary: Mapped[str | None] = mapped_column(Text)
+    error_code: Mapped[str | None] = mapped_column(String(100))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    duration_ms: Mapped[int | None] = mapped_column(Integer)
+
+    agent_run: Mapped[AgentRunModel] = relationship(back_populates="tool_calls")
 
 
 class ApprovalRecordModel(Base):

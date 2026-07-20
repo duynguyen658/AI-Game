@@ -8,11 +8,16 @@ from app.core.constants import (
     WorkflowStep,
 )
 from app.database.models import (
+    AgentRunModel,
+    AgentToolCallModel,
     ApprovalRecordModel,
     CampaignModel,
     SecurityEventModel,
     WorkflowRunModel,
 )
+from app.core.constants import AgentName, AgentRunStatus, ToolCallStatus
+from app.schemas.agent_run import AgentRunRead
+from app.schemas.tool_call import ToolCallRead
 from app.schemas.approval import ApprovalRecord
 from app.schemas.campaign import (
     BriefAnalysis,
@@ -108,4 +113,40 @@ def security_event_to_schema(model: SecurityEventModel) -> SecurityEvent:
         message=model.message,
         metadata=model.metadata_,
         occurred_at=model.created_at,
+    )
+
+
+def agent_run_to_schema(model: AgentRunModel) -> AgentRunRead:
+    return AgentRunRead(
+        agent_run_id=model.agent_run_id,
+        workflow_id=model.workflow_id,
+        campaign_id=model.campaign_id,
+        agent_name=AgentName(model.agent_name),
+        status=AgentRunStatus(model.status),
+        model=model.model,
+        prompt_version=model.prompt_version,
+        iteration_count=model.iteration_count,
+        llm_call_count=model.llm_call_count,
+        tool_call_count=model.tool_call_count,
+        started_at=model.started_at,
+        updated_at=model.updated_at,
+        completed_at=model.completed_at,
+        error_code=model.error_code,
+        error_message=model.error_message,
+    )
+
+
+def tool_call_to_schema(model: AgentToolCallModel) -> ToolCallRead:
+    return ToolCallRead(
+        tool_call_id=model.tool_call_id,
+        agent_run_id=model.agent_run_id,
+        tool_name=model.tool_name,
+        arguments=model.arguments,
+        status=ToolCallStatus(model.status),
+        result_summary=model.result_summary,
+        error_code=model.error_code,
+        error_message=model.error_message,
+        started_at=model.started_at,
+        completed_at=model.completed_at,
+        duration_ms=model.duration_ms,
     )

@@ -96,6 +96,28 @@ class SecuritySeverity(StrEnum):
     CRITICAL = "CRITICAL"
 
 
+class AgentName(StrEnum):
+    BRIEF_ANALYST = "BRIEF_ANALYST"
+    CONTENT_GENERATOR = "CONTENT_GENERATOR"
+    CONTENT_REVIEWER = "CONTENT_REVIEWER"
+
+
+class AgentRunStatus(StrEnum):
+    CREATED = "CREATED"
+    RUNNING = "RUNNING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    LIMIT_EXCEEDED = "LIMIT_EXCEEDED"
+
+
+class ToolCallStatus(StrEnum):
+    REQUESTED = "REQUESTED"
+    RUNNING = "RUNNING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    REJECTED = "REJECTED"
+
+
 CAMPAIGN_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_-]*$"
 
 MIN_CAMPAIGN_ID_LENGTH = 3
