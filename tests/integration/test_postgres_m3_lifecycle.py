@@ -14,10 +14,18 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_llm_client
-from app.core.constants import ApprovalDecision, CampaignStatus, UserRole, WorkflowStep
+from app.core.constants import (
+    AgentName,
+    AgentRunStatus,
+    ApprovalDecision,
+    CampaignStatus,
+    UserRole,
+    WorkflowStep,
+)
 from app.core.exceptions import (
     ApprovalAlreadyDecidedError,
     ApprovalNotAllowedError,
+    AgentIterationLimitError,
     LLMProviderError,
     LLMResponseError,
     PersistenceError,
@@ -26,7 +34,14 @@ from app.core.exceptions import (
     WorkflowCreationNotAllowedError,
     WorkflowLimitError,
 )
-from app.database.models import ApprovalRecordModel, CampaignModel, WorkflowRunModel
+from app.database.models import (
+    AgentRunModel,
+    AgentToolCallModel,
+    ApprovalRecordModel,
+    CampaignModel,
+    WorkflowRunModel,
+)
+from app.llm.agent_turn import AgentToolRequest, AgentTurn
 from app.database.session import AsyncSessionLocal
 from app.llm.mock_client import MockLLMClient
 from app.repositories.approval_repository import ApprovalRepository
@@ -243,6 +258,19 @@ async def test_workflow_retry_then_pass_persists_counters() -> None:
         )
 
         assert result.status == CampaignStatus.PENDING_APPROVAL
+        agent_runs = (
+            (
+                await session.execute(
+                    select(AgentRunModel).where(
+                        AgentRunModel.workflow_id == workflow.workflow_id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(agent_runs) == 5
+        assert all(run.status == AgentRunStatus.COMPLETED.value for run in agent_runs)
         assert result.retry_count == 1
         assert result.llm_call_count == 5
         assert client.call_count == 5
@@ -1203,3 +1231,112 @@ async def test_api_e2e_revision_failure_and_retry_flows(
     assert retry_run.json()["status"] == CampaignStatus.PENDING_APPROVAL
     assert retry_run.json()["retry_count"] == 1
     assert retry_run.json()["llm_call_count"] == 5
+
+
+@pytest.mark.asyncio
+async def test_agentic_happy_path_persists_runs_tools_and_query_api(
+    db_session: AsyncSession,
+    api_client: AsyncClient,
+) -> None:
+    campaign_id = "CL-M4-HAPPY"
+    await create_campaign(db_session, campaign_id)
+    workflow = await WorkflowService(db_session).create_workflow(campaign_id)
+    analysis = BriefAnalysis(
+        summary="Campaign summary",
+        campaign_objective="Drive pre-registration",
+        target_audience="18-30",
+        main_message="Register now",
+    )
+    client = MockLLMClient(
+        scripted_turns=[
+            AgentTurn(
+                tool_calls=[
+                    AgentToolRequest(
+                        tool_call_id="brief-campaign",
+                        tool_name="get_campaign",
+                        arguments={"campaign_id": campaign_id},
+                    )
+                ]
+            ),
+            AgentTurn(final_output=analysis.model_dump(mode="json")),
+            AgentTurn(final_output=generated_content().model_dump(mode="json")),
+            AgentTurn(final_output=review("PASS").model_dump(mode="json")),
+        ]
+    )
+
+    result = await CampaignWorkflow(db_session, client).run_to_pending_approval(
+        workflow.workflow_id
+    )
+    assert result.status == CampaignStatus.PENDING_APPROVAL
+    assert result.llm_call_count == 4
+
+    runs = (
+        (
+            await db_session.execute(
+                select(AgentRunModel)
+                .where(AgentRunModel.workflow_id == workflow.workflow_id)
+                .order_by(AgentRunModel.started_at)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert [run.agent_name for run in runs] == [
+        AgentName.BRIEF_ANALYST.value,
+        AgentName.CONTENT_GENERATOR.value,
+        AgentName.CONTENT_REVIEWER.value,
+    ]
+    assert [run.llm_call_count for run in runs] == [2, 1, 1]
+    assert all(run.status == AgentRunStatus.COMPLETED.value for run in runs)
+    tool_calls = (await db_session.execute(select(AgentToolCallModel))).scalars().all()
+    assert len(tool_calls) == 1
+    assert tool_calls[0].status == "COMPLETED"
+
+    response = await api_client.get(f"/workflows/{workflow.workflow_id}/agent-runs")
+    assert response.status_code == 200
+    assert len(response.json()) == 3
+    response = await api_client.get(f"/agent-runs/{runs[0].agent_run_id}/tool-calls")
+    assert response.status_code == 200
+    assert len(response.json()) == 1
+
+
+@pytest.mark.asyncio
+async def test_agent_iteration_limit_persists_run_and_workflow_failure(
+    db_session: AsyncSession,
+) -> None:
+    campaign_id = "CL-M4-LIMIT"
+    await create_campaign(db_session, campaign_id)
+    workflow = await WorkflowService(db_session).create_workflow(campaign_id)
+    turns = [
+        AgentTurn(
+            tool_calls=[
+                AgentToolRequest(
+                    tool_call_id=f"campaign-{index}",
+                    tool_name="get_campaign",
+                    arguments={"campaign_id": campaign_id},
+                )
+            ]
+        )
+        for index in range(5)
+    ]
+
+    with pytest.raises(AgentIterationLimitError, match="iteration budget exhausted"):
+        await CampaignWorkflow(
+            db_session, MockLLMClient(scripted_turns=turns)
+        ).run_to_pending_approval(workflow.workflow_id)
+
+    run = (
+        await db_session.execute(
+            select(AgentRunModel).where(
+                AgentRunModel.workflow_id == workflow.workflow_id
+            )
+        )
+    ).scalar_one()
+    await db_session.refresh(run)
+    stored_workflow = await db_session.get(WorkflowRunModel, workflow.workflow_id)
+    assert run.status == AgentRunStatus.LIMIT_EXCEEDED.value
+    assert run.iteration_count == 5
+    assert run.llm_call_count == 5
+    assert run.tool_call_count == 5
+    assert stored_workflow is not None
+    assert stored_workflow.status == CampaignStatus.FAILED.value
