@@ -1168,9 +1168,26 @@ class PromptExperimentModel(Base):
     )
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="DRAFT")
     sample_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    provider: Mapped[str] = mapped_column(String(50), nullable=False, default="mock")
+    model: Mapped[str] = mapped_column(
+        String(200), nullable=False, default="mock-applied-ai"
+    )
+    execution_settings: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )
+    dataset_version: Mapped[str | None] = mapped_column(String(100))
+    model_configuration_hash: Mapped[str | None] = mapped_column(String(64))
+    tool_registry_version: Mapped[str | None] = mapped_column(String(100))
+    policy_version: Mapped[str | None] = mapped_column(String(100))
+    application_version: Mapped[str | None] = mapped_column(String(100))
+    job_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("background_jobs.job_id", ondelete="SET NULL")
+    )
     created_by: Mapped[str] = mapped_column(String(200), nullable=False)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_code: Mapped[str | None] = mapped_column(String(100))
+    error_message: Mapped[str | None] = mapped_column(String(2000))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now
     )
@@ -1198,6 +1215,118 @@ class PromptExperimentResultModel(Base):
     candidate_metrics: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     winner: Mapped[str | None] = mapped_column(String(20))
     decision_reason: Mapped[str] = mapped_column(String(1000), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now
+    )
+
+
+class PromptExperimentCaseResultModel(Base):
+    __tablename__ = "prompt_experiment_case_results"
+    __table_args__ = (
+        UniqueConstraint(
+            "experiment_id",
+            "evaluation_case_id",
+            "variant",
+            name="uq_prompt_experiment_case_variant",
+        ),
+        Index("ix_prompt_experiment_cases_status", "experiment_id", "status"),
+    )
+
+    case_result_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    experiment_id: Mapped[UUID] = mapped_column(
+        ForeignKey("prompt_experiments.experiment_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    evaluation_case_id: Mapped[UUID] = mapped_column(
+        ForeignKey("evaluation_cases.evaluation_case_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    prompt_version_id: Mapped[UUID] = mapped_column(
+        ForeignKey("prompt_versions.prompt_version_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    variant: Mapped[str] = mapped_column(String(20), nullable=False)
+    status: Mapped[str] = mapped_column(String(50), nullable=False)
+    output: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    metrics: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    error_code: Mapped[str | None] = mapped_column(String(100))
+    error_message: Mapped[str | None] = mapped_column(String(2000))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now
+    )
+
+
+class ProviderComparisonModel(Base):
+    __tablename__ = "provider_comparisons"
+    __table_args__ = (
+        Index("ix_provider_comparisons_status_created", "status", "created_at"),
+    )
+
+    comparison_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    prompt_version_id: Mapped[UUID] = mapped_column(
+        ForeignKey("prompt_versions.prompt_version_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    dataset_id: Mapped[UUID] = mapped_column(
+        ForeignKey("evaluation_datasets.dataset_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    dataset_version: Mapped[str | None] = mapped_column(String(100))
+    providers: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    models: Mapped[dict[str, str]] = mapped_column(JSONB, nullable=False)
+    sample_size: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+    execution_settings: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="DRAFT")
+    report: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    job_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("background_jobs.job_id", ondelete="SET NULL")
+    )
+    created_by: Mapped[str] = mapped_column(String(200), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_code: Mapped[str | None] = mapped_column(String(100))
+    error_message: Mapped[str | None] = mapped_column(String(2000))
+
+
+class ProviderComparisonCaseResultModel(Base):
+    __tablename__ = "provider_comparison_case_results"
+    __table_args__ = (
+        UniqueConstraint(
+            "comparison_id",
+            "evaluation_case_id",
+            "provider",
+            name="uq_provider_comparison_case_provider",
+        ),
+        Index("ix_provider_comparison_cases_status", "comparison_id", "status"),
+    )
+
+    case_result_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    comparison_id: Mapped[UUID] = mapped_column(
+        ForeignKey("provider_comparisons.comparison_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    evaluation_case_id: Mapped[UUID] = mapped_column(
+        ForeignKey("evaluation_cases.evaluation_case_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    provider: Mapped[str] = mapped_column(String(50), nullable=False)
+    model: Mapped[str] = mapped_column(String(200), nullable=False)
+    status: Mapped[str] = mapped_column(String(50), nullable=False)
+    output: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    metrics: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    error_code: Mapped[str | None] = mapped_column(String(100))
+    error_message: Mapped[str | None] = mapped_column(String(2000))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now
     )
@@ -1260,7 +1389,10 @@ class AITaskImpactModel(Base):
     ai_task_impact_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True), primary_key=True, default=uuid4
     )
-    task_run_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    task_run_id: Mapped[UUID] = mapped_column(
+        ForeignKey("applied_workflow_tasks.task_run_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
     task_type: Mapped[str] = mapped_column(String(100), nullable=False)
     department: Mapped[str | None] = mapped_column(String(100))
     workflow_id: Mapped[UUID | None] = mapped_column(
@@ -1310,11 +1442,20 @@ class UserFeedbackModel(Base):
     user_feedback_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True), primary_key=True, default=uuid4
     )
-    task_run_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    task_run_id: Mapped[UUID] = mapped_column(
+        ForeignKey("applied_workflow_tasks.task_run_id", ondelete="CASCADE"),
+        nullable=False,
+    )
     task_type: Mapped[str] = mapped_column(String(100), nullable=False)
-    workflow_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True))
-    agent_run_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True))
-    prompt_version_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+    workflow_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("workflow_runs.workflow_id", ondelete="SET NULL")
+    )
+    agent_run_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("agent_runs.agent_run_id", ondelete="SET NULL")
+    )
+    prompt_version_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("prompt_versions.prompt_version_id", ondelete="SET NULL")
+    )
     provider: Mapped[str] = mapped_column(String(50), nullable=False)
     model: Mapped[str] = mapped_column(String(200), nullable=False)
     actor_id: Mapped[str] = mapped_column(String(200), nullable=False)
@@ -1356,8 +1497,15 @@ class AppliedWorkflowTaskModel(Base):
     prompt_version_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("prompt_versions.prompt_version_id", ondelete="SET NULL")
     )
+    prompt_template_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("prompt_templates.prompt_template_id", ondelete="SET NULL")
+    )
+    prompt_version_number: Mapped[int | None] = mapped_column(Integer)
+    prompt_content_hash: Mapped[str | None] = mapped_column(String(64))
     provider: Mapped[str | None] = mapped_column(String(50))
     model: Mapped[str | None] = mapped_column(String(200))
+    model_configuration_hash: Mapped[str | None] = mapped_column(String(64))
+    application_version: Mapped[str | None] = mapped_column(String(100))
     job_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("background_jobs.job_id", ondelete="SET NULL")
     )
@@ -1371,6 +1519,13 @@ class AppliedWorkflowTaskModel(Base):
         DateTime(timezone=True), default=utc_now, onupdate=utc_now
     )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    duration_ms: Mapped[int | None] = mapped_column(Integer)
+    input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    estimated_cost: Mapped[Decimal] = mapped_column(
+        Numeric(14, 6), nullable=False, default=Decimal("0")
+    )
 
 
 class MediaAssetModel(Base):
@@ -1405,6 +1560,13 @@ class MediaAssetModel(Base):
     prompt_version_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("prompt_versions.prompt_version_id", ondelete="SET NULL")
     )
+    prompt_template_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("prompt_templates.prompt_template_id", ondelete="SET NULL")
+    )
+    prompt_version_number: Mapped[int | None] = mapped_column(Integer)
+    prompt_content_hash: Mapped[str | None] = mapped_column(String(64))
+    model_configuration_hash: Mapped[str | None] = mapped_column(String(64))
+    application_version: Mapped[str | None] = mapped_column(String(100))
     generation_prompt: Mapped[str] = mapped_column(Text, nullable=False)
     negative_prompt: Mapped[str | None] = mapped_column(Text)
     storage_uri: Mapped[str | None] = mapped_column(String(1000))
@@ -1428,6 +1590,9 @@ class MediaAssetModel(Base):
     rejected_by: Mapped[str | None] = mapped_column(String(200))
     rejected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     rejection_reason: Mapped[str | None] = mapped_column(String(1000))
+    error_code: Mapped[str | None] = mapped_column(String(100))
+    error_message: Mapped[str | None] = mapped_column(String(2000))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class MediaGenerationAttemptModel(Base):
@@ -1445,6 +1610,8 @@ class MediaGenerationAttemptModel(Base):
         ForeignKey("media_assets.media_asset_id", ondelete="CASCADE"), nullable=False
     )
     attempt_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    provider: Mapped[str] = mapped_column(String(50), nullable=False)
+    model: Mapped[str] = mapped_column(String(200), nullable=False)
     provider_job_id: Mapped[str | None] = mapped_column(String(300))
     status: Mapped[str] = mapped_column(String(50), nullable=False)
     started_at: Mapped[datetime] = mapped_column(
