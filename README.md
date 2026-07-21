@@ -1,14 +1,20 @@
-# Cyber Legends AI Workflow Backend
+# Cyber Legends AI Operations Workspace
 
-Production-oriented FastAPI backend with a deterministic campaign workflow and a
-bounded, observable Agentic Core. The application remains authoritative for workflow
-state, retries, policy and approval decisions, persistence, authorization, and audit
-history.
+Production-oriented Applied AI product with a Next.js operations workspace and a
+FastAPI backend. The application remains authoritative for workflow state, retries,
+policy and approval decisions, persistence, authorization, and audit history.
+
+![Cyber Legends login](frontend/screenshots/login-desktop.png)
+
+![Cyber Legends dashboard](frontend/screenshots/dashboard-desktop.png)
 
 Milestone 7 extends this foundation into an Applied AI workflow platform with managed
 prompt versions and experiments, business-impact analytics, OpenAI/Gemini/Anthropic
 adapters, signed n8n webhooks, review-gated media, deterministic CSV analysis, and safe
-PDF/DOCX/TXT processing. No frontend or automatic publishing is included.
+PDF/DOCX/TXT processing. Milestone 8 adds the responsive frontend, signed demo
+sessions, a server-side BFF, generated OpenAPI types, accessible async status views,
+frontend tests, and production container packaging. Automatic publishing remains
+intentionally unavailable without policy-controlled approval.
 
 ```bash
 alembic upgrade head
@@ -99,6 +105,21 @@ Run the PostgreSQL worker in a second terminal:
 python -m app.workers.main
 ```
 
+Run the frontend in a third terminal:
+
+```bash
+cd frontend
+pnpm install --frozen-lockfile
+pnpm dev
+```
+
+Open `http://localhost:3000`, choose a demo identity and role, then use the task
+catalog. Marketing users run campaign, CSV, document, image, and storyboard flows;
+reviewers handle approvals; managers and administrators also access prompts,
+experiments, providers, analytics, jobs, alerts, and health. See
+`docs/frontend/DEMO_SCRIPT.md` for the 5-8 minute demonstration and
+`docs/frontend/ARCHITECTURE.md` for the browser security boundary.
+
 Useful endpoints:
 
 - `GET /`
@@ -171,10 +192,9 @@ Production containers:
 docker compose -f docker-compose.production.yml up --build
 ```
 
-No frontend exists in this repository, so the optional M6 operator dashboard remains
-deferred. The authenticated operator APIs are the supported v1 operator experience.
-See the M6 documents under `docs/` for recovery, deployment, alert, and evaluation
-procedures.
+M8 provides the operator dashboard through authenticated BFF calls while preserving
+the M6 operator APIs as the backend contract. See the M6 documents under `docs/` for
+recovery, deployment, alert, and evaluation procedures.
 
 ## Agent Runtime
 

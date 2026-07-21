@@ -67,5 +67,21 @@ services:
         condition: service_completed_successfully
     stop_grace_period: 75s
 
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      BACKEND_BASE_URL: http://api:8000
+      DEMO_AUTH_ENABLED: ${DEMO_AUTH_ENABLED:-true}
+      DEMO_SESSION_SECRET: ${DEMO_SESSION_SECRET}
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    stop_grace_period: 20s
+
 volumes:
   postgres_production_data:

@@ -8,11 +8,54 @@ on:
       - feature/m5-policy-memory-actions
       - feature/m6-production-operations
       - feature/m7-applied-ai-workflows
+      - feature/m8-frontend-productization
   pull_request:
     branches:
       - main
 
 jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.9.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+      - name: OpenAPI generated type drift
+        run: pnpm openapi:check
+      - name: Lint
+        run: pnpm lint
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Unit and component tests
+        run: pnpm test
+      - name: Production build
+        env:
+          DEMO_SESSION_SECRET: ci-session-secret-at-least-32-characters
+        run: pnpm build
+      - name: Install Chromium
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Playwright and accessibility smoke
+        run: pnpm test:e2e --project=chromium
+      - name: Dependency audit
+        run: pnpm audit --audit-level high
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report
+          path: frontend/playwright-report
+          if-no-files-found: ignore
+
   test:
     runs-on: ubuntu-latest
     services:
@@ -100,7 +143,7 @@ jobs:
           path: sbom-python.json
 
   images:
-    needs: test
+    needs: [test, frontend]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -110,6 +153,26 @@ jobs:
 
       - name: Build worker image
         run: docker build -f Dockerfile.worker -t cyber-legends-worker:${{ github.sha }} .
+
+      - name: Build frontend image
+        run: docker build -f frontend/Dockerfile -t cyber-legends-frontend:${{ github.sha }} frontend
+
+      - name: Smoke frontend image
+        run: |
+          docker run -d --rm --name cyber-legends-frontend -p 3000:3000 \
+            -e DEMO_SESSION_SECRET=ci-session-secret-at-least-32-characters \
+            cyber-legends-frontend:${{ github.sha }}
+          trap 'docker stop cyber-legends-frontend >/dev/null 2>&1 || true' EXIT
+          ready=0
+          for attempt in {1..20}; do
+            if curl --fail http://127.0.0.1:3000/login; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          test "$ready" = "1"
+          docker stop cyber-legends-frontend
 
       - name: Smoke API image
         run: docker run --rm cyber-legends-api:${{ github.sha }} python -c "from app.main import app; assert app"
