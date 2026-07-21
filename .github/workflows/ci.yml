@@ -9,6 +9,7 @@ on:
       - feature/m6-production-operations
       - feature/m7-applied-ai-workflows
       - feature/m8-frontend-productization
+      - main
   pull_request:
     branches:
       - main
@@ -41,12 +42,16 @@ jobs:
         run: pnpm test
       - name: Production build
         env:
-          DEMO_SESSION_SECRET: ci-session-secret-at-least-32-characters
+          AUTH_MODE: demo
+          DEMO_AUTH_ENABLED: "true"
+          ALLOW_PRODUCTION_DEMO: "true"
+          SESSION_SECRET: ci-session-secret-at-least-32-characters
+          BACKEND_API_URL: http://127.0.0.1:8000
         run: pnpm build
       - name: Install Chromium
         run: pnpm exec playwright install --with-deps chromium
-      - name: Playwright and accessibility smoke
-        run: pnpm test:e2e --project=chromium
+      - name: Playwright desktop mobile tablet accessibility and visual gates
+        run: pnpm test:e2e
       - name: Dependency audit
         run: pnpm audit --audit-level high
       - uses: actions/upload-artifact@v4
@@ -55,6 +60,47 @@ jobs:
           name: playwright-report
           path: frontend/playwright-report
           if-no-files-found: ignore
+
+  full-stack-e2e:
+    needs: [test, frontend]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.9.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Install Playwright dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile && pnpm exec playwright install --with-deps chromium
+      - name: Start deterministic demo stack
+        run: docker compose -f docker-compose.demo.yml up -d --build
+      - name: Verify full-stack health and connectivity
+        run: |
+          docker compose -f docker-compose.demo.yml ps
+          ready=0
+          for attempt in {1..60}; do
+            if curl --fail http://127.0.0.1:3000/login; then ready=1; break; fi
+            sleep 2
+          done
+          test "$ready" = "1"
+      - name: Real BFF backend worker Playwright flows
+        working-directory: frontend
+        env:
+          E2E_FULL_STACK: "1"
+          PLAYWRIGHT_EXTERNAL_SERVER: "1"
+          PLAYWRIGHT_BASE_URL: http://127.0.0.1:3000
+        run: pnpm exec playwright test e2e/full-stack.spec.ts --project=chromium
+      - name: Compose logs
+        if: always()
+        run: docker compose -f docker-compose.demo.yml logs --no-color
+      - name: Stop deterministic demo stack
+        if: always()
+        run: docker compose -f docker-compose.demo.yml down -v
 
   test:
     runs-on: ubuntu-latest
@@ -143,10 +189,27 @@ jobs:
           path: sbom-python.json
 
   images:
-    needs: [test, frontend]
+    needs: [test, frontend, full-stack-e2e]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Validate production Compose contract
+        env:
+          POSTGRES_DB: cyber_legends
+          POSTGRES_USER: cyber_legends
+          POSTGRES_PASSWORD: ci-production-database-password
+          JWT_SECRET_KEY: ci-production-jwt-secret
+          JWT_ISSUER: https://identity.example.test
+          JWT_AUDIENCE: cyber-legends
+          JWT_JWKS_URL: https://identity.example.test/.well-known/jwks.json
+          SESSION_SECRET: ci-production-session-secret-at-least-32-characters
+          OIDC_ISSUER: https://identity.example.test
+          OIDC_CLIENT_ID: cyber-legends
+          OIDC_CLIENT_SECRET: ci-production-oidc-secret
+          OIDC_REDIRECT_URI: https://app.example.test/api/auth/callback
+          OIDC_POST_LOGOUT_REDIRECT_URI: https://app.example.test/login
+        run: touch .env && docker compose -f docker-compose.production.yml config --quiet
 
       - name: Build API image
         run: docker build -f Dockerfile.api -t cyber-legends-api:${{ github.sha }} .
@@ -160,7 +223,9 @@ jobs:
       - name: Smoke frontend image
         run: |
           docker run -d --rm --name cyber-legends-frontend -p 3000:3000 \
-            -e DEMO_SESSION_SECRET=ci-session-secret-at-least-32-characters \
+            -e AUTH_MODE=demo -e DEMO_AUTH_ENABLED=true -e ALLOW_PRODUCTION_DEMO=true \
+            -e SESSION_SECRET=ci-session-secret-at-least-32-characters \
+            -e BACKEND_API_URL=http://127.0.0.1:8000 \
             cyber-legends-frontend:${{ github.sha }}
           trap 'docker stop cyber-legends-frontend >/dev/null 2>&1 || true' EXIT
           ready=0
@@ -196,8 +261,28 @@ jobs:
           exit-code: "1"
           severity: CRITICAL,HIGH
 
+      - name: Scan frontend image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: cyber-legends-frontend:${{ github.sha }}
+          format: table
+          exit-code: "1"
+          severity: CRITICAL,HIGH
+
       - name: Generate container SBOM
         uses: anchore/sbom-action@v0.17.2
         with:
           image: cyber-legends-api:${{ github.sha }}
           artifact-name: sbom-api.spdx.json
+
+      - name: Generate worker SBOM
+        uses: anchore/sbom-action@v0.17.2
+        with:
+          image: cyber-legends-worker:${{ github.sha }}
+          artifact-name: sbom-worker.spdx.json
+
+      - name: Generate frontend SBOM
+        uses: anchore/sbom-action@v0.17.2
+        with:
+          image: cyber-legends-frontend:${{ github.sha }}
+          artifact-name: sbom-frontend.spdx.json

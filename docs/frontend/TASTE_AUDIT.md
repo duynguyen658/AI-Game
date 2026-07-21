@@ -14,4 +14,4 @@ Anti-slop review:
 - UUIDs are compact secondary references instead of primary titles where descriptive labels exist.
 - Charts use backend metrics and provide tabular equivalents.
 
-Final browser screenshots and overflow checks are recorded during release validation rather than asserted here before execution.
+M8 release validation covers desktop Chromium, tablet Chromium, and mobile Chromium with reduced motion, a fixed UTC timezone, and deterministic seeded content. Reviewed visual baselines cover login, dashboard, campaign detail, CSV and document reports, media detail, prompt experiment, business impact, and jobs. Axe runs with color contrast enabled; responsive smoke checks cover login, dashboard, approvals, alerts, task results, and feedback.

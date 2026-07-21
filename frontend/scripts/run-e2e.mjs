@@ -6,8 +6,11 @@ const environment = {
   ...process.env,
   PORT: port,
   HOSTNAME: "127.0.0.1",
+  AUTH_MODE: "demo",
   DEMO_AUTH_ENABLED: "true",
-  DEMO_SESSION_SECRET: process.env.DEMO_SESSION_SECRET ?? "playwright-session-secret-at-least-32-characters",
+  ALLOW_PRODUCTION_DEMO: "true",
+  SESSION_SECRET: process.env.SESSION_SECRET ?? "playwright-session-secret-at-least-32-characters",
+  BACKEND_API_URL: process.env.BACKEND_API_URL ?? "http://127.0.0.1:8000",
 };
 const server = spawn(process.execPath, [".next/standalone/server.js"], { env: environment, stdio: ["ignore", "pipe", "pipe"] });
 server.stdout.pipe(process.stdout);

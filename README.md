@@ -192,9 +192,24 @@ Production containers:
 docker compose -f docker-compose.production.yml up --build
 ```
 
-M8 provides the operator dashboard through authenticated BFF calls while preserving
-the M6 operator APIs as the backend contract. See the M6 documents under `docs/` for
-recovery, deployment, alert, and evaluation procedures.
+Production requires explicit PostgreSQL/JWT values plus `SESSION_SECRET`,
+`OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_REDIRECT_URI`, and
+`OIDC_POST_LOGOUT_REDIRECT_URI`. The frontend uses the internal
+`BACKEND_API_URL=http://api:8000`; the API is not published directly by the production
+Compose file. Validate configuration before deployment with
+`docker compose -f docker-compose.production.yml config`.
+
+The local demo stack is intentionally separate and is not a production authentication
+configuration:
+
+```bash
+docker compose -f docker-compose.demo.yml up -d --build
+```
+
+M8 provides the Next.js operations workspace, a server-side OIDC adapter, encrypted
+HttpOnly sessions, a streaming BFF, owner-filtered collection APIs, and backend
+resource authorization. See `docs/frontend/SECURITY_MODEL.md`,
+`docs/frontend/DEPLOYMENT_GUIDE.md`, and `docs/frontend/E2E_GUIDE.md`.
 
 ## Agent Runtime
 
@@ -422,9 +437,11 @@ key and is the default for tests. Real OpenAI usage requires `LLM_PROVIDER=opena
 
 ## Deferred Scope
 
-M6 is implemented in the backend. The intentionally deferred scope is the full
-product frontend, external publishing integrations, vector/semantic memory,
-autonomous supervision, enterprise integrations, and multi-region deployment.
+M8 is implemented through release candidate `1.0.0-rc.1`. The intentionally deferred
+scope is provider-specific enterprise SSO rollout beyond the generic OIDC adapter,
+external publishing, a generic workflow builder, vector/semantic memory UI,
+autonomous supervisor UI, billing, native mobile applications, and multi-region
+deployment.
 Agents still cannot approve campaigns, publish externally, execute arbitrary SQL or
 shell commands, or bypass deterministic policy and human approval.
 
@@ -441,5 +458,5 @@ persistence failures after rollback. Technical completion is separate from nulla
 human acceptance; acceptance analytics exclude unknown decisions from the
 denominator.
 
-The M8 frontend shell, authentication UI, task workspace, prompt and experiment UI,
-media studio, upload UI, impact dashboard, and feedback forms remain deferred.
+The M8 frontend shell, authentication, task workspace, prompt and experiment UI,
+media studio, upload UI, impact dashboard, and feedback forms are implemented.
