@@ -15,3 +15,5 @@ alembic
 structlog
 prometheus-client
 opentelemetry-api
+pypdf
+python-docx
