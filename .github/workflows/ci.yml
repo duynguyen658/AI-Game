@@ -82,8 +82,8 @@ jobs:
       - name: M6 production blocker tests
         run: python -m pytest tests/integration/test_m6_outbox.py tests/integration/test_m6_jobs.py tests/unit/observability/test_observability.py -v
 
-      - name: M7 applied AI blocker tests
-        run: python -m pytest tests/integration/test_m7_applied_ai.py tests/unit/llm/test_provider_contracts.py tests/unit/integrations tests/unit/applied_workflows tests/unit/media tests/unit/prompt_management -v
+      - name: M7 media persistence and acceptance blocker tests
+        run: python -m pytest tests/integration/test_m7_applied_ai.py tests/unit/llm/test_provider_contracts.py tests/unit/integrations tests/unit/applied_workflows tests/unit/media tests/unit/business_impact tests/unit/database/test_m7_integrity.py tests/unit/prompt_management -v
 
       - name: API and worker smoke
         run: python -c "from app.main import app; from app.jobs.handlers import build_job_handlers; from app.database.session import AsyncSessionLocal; assert app and build_job_handlers(AsyncSessionLocal)"

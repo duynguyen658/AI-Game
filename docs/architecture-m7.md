@@ -9,3 +9,7 @@ n8n inbound requests are authenticated over the raw body with timestamped HMAC-S
 Prompt experiments and provider comparisons execute managed prompt versions against an immutable dataset snapshot through registered adapters. Case output, normalized usage, latency, failures, aggregate metrics, and configuration provenance are persisted by background jobs. Client-supplied result metrics are rejected, and experiment winners are never activated automatically.
 
 Applied task, media, experiment, and comparison state is reconciled when a job is cancelled or exhausts retries. Retrying clears terminal errors while retaining prior case and media-attempt audit rows. Business-impact records reference real completed tasks and derive provider, model, prompt, duration, and cost from execution evidence.
+
+Media attempts carry job-attempt and worker ownership. The worker validates the live lease inside the short success transaction that updates attempt, asset, task, and outbox together. Failure and cancellation use a separate guarded terminalization transaction; terminal-job reconciliation is the bounded recovery path. Attempt numbers are allocated while locking the asset row.
+
+M7 persistence maps `IntegrityError` by exact PostgreSQL constraint name. Known idempotency constraints can return an existing resource or a stable conflict. Foreign-key, check, null, and unknown violations become safe persistence errors after rollback. Business-impact analytics keep technical success separate from nullable human acceptance.

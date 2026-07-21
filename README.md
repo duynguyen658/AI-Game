@@ -407,3 +407,19 @@ product frontend, external publishing integrations, vector/semantic memory,
 autonomous supervision, enterprise integrations, and multi-region deployment.
 Agents still cannot approve campaigns, publish externally, execute arbitrary SQL or
 shell commands, or bypass deterministic policy and human approval.
+
+## M7 Final Hardening
+
+Media attempt success is fenced by the live job lease and commits attempt, asset,
+task, and ready-for-review outbox state atomically. Failure, cancellation, and
+terminal-job reconciliation leave no active `STARTED` attempt. Attempt numbers are
+allocated under an asset row lock, and stale workers cannot publish success.
+
+M7 services map only named PostgreSQL uniqueness constraints to conflicts or
+idempotent results. Unknown, foreign-key, check, and null violations remain safe
+persistence failures after rollback. Technical completion is separate from nullable
+human acceptance; acceptance analytics exclude unknown decisions from the
+denominator.
+
+The M8 frontend shell, authentication UI, task workspace, prompt and experiment UI,
+media studio, upload UI, impact dashboard, and feedback forms remain deferred.
