@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from typing import cast
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -11,6 +12,7 @@ from app.core.constants import (
     CampaignStatus,
     JobType,
     OutboxEventType,
+    ProviderName,
 )
 from app.core.exceptions import JobPayloadError
 from app.evaluation.runner import EvaluationRunner
@@ -26,14 +28,18 @@ from app.jobs.definitions import (
     DocumentProcessingJobPayload,
     ImageGenerationJobPayload,
     VideoStoryboardJobPayload,
+    PromptExperimentRunJobPayload,
+    ProviderComparisonRunJobPayload,
     validate_job_payload,
 )
 from app.jobs.worker import JobControl, JobHandler
 from app.llm.factory import build_llm_client
 from app.llm.base import LLMClient
+from app.llm.registry import build_provider_registry
 from app.operations.alert_rules import AlertReconciler
 from app.outbox.dispatcher import OutboxDispatcher
 from app.repositories.action_execution_repository import ActionExecutionRepository
+from app.repositories.prompt_repository import PromptRepository
 from app.service.action_service import ActionService
 from app.service.auth_service import AuthenticatedActor
 from app.service.workflow_service import WorkflowService
@@ -43,6 +49,10 @@ from app.applied_workflows.document_processing.processor import process_document
 from app.media.service import MediaProcessor
 from app.outbox.service import OutboxService
 from app.service.applied_workflow_service import AppliedWorkflowService
+from app.prompt_management.runners import (
+    PromptExperimentRunner,
+    ProviderComparisonRunner,
+)
 
 
 def build_job_handlers(
@@ -50,9 +60,14 @@ def build_job_handlers(
     *,
     settings: Settings | None = None,
     llm_client_factory: Callable[[], LLMClient] | None = None,
+    provider_client_factory: Callable[[ProviderName], LLMClient] | None = None,
 ) -> Mapping[JobType, JobHandler]:
     config = settings or get_settings()
     client_factory = llm_client_factory or (lambda: build_llm_client(config))
+    provider_registry = build_provider_registry(config)
+    comparison_client_factory = provider_client_factory or (
+        lambda provider: cast(LLMClient, provider_registry.get(provider))
+    )
 
     async def workflow_run(job: LeasedJob, control: JobControl) -> None:
         payload = validate_job_payload(job.job_type, job.payload)
@@ -149,15 +164,25 @@ def build_job_handlers(
             task = await AppliedWorkflowService(session).required(payload.task_run_id)
             if task.status == AppliedTaskStatus.COMPLETED.value:
                 return
-            task.status = AppliedTaskStatus.PROCESSING.value
+            task = await AppliedWorkflowService(session).mark_processing(
+                payload.task_run_id, commit=False
+            )
             content = bytes(task.input_content or b"")
             filename = str(task.input_metadata.get("filename", "upload.csv"))
+            prompt_version = (
+                await PromptRepository(session).get_version(task.prompt_version_id)
+                if task.prompt_version_id
+                else None
+            )
+            if prompt_version is None:
+                raise JobPayloadError("Managed data-analysis prompt is unavailable")
             await session.commit()
         report = await analyze_csv(
             content,
             filename=filename,
             settings=config,
             llm_client=client_factory(),
+            prompt_version=prompt_version,
         )
         await control.checkpoint()
         async with session_factory() as session:
@@ -181,12 +206,21 @@ def build_job_handlers(
             task = await AppliedWorkflowService(session).required(payload.task_run_id)
             if task.status == AppliedTaskStatus.COMPLETED.value:
                 return
-            task.status = AppliedTaskStatus.PROCESSING.value
+            task = await AppliedWorkflowService(session).mark_processing(
+                payload.task_run_id, commit=False
+            )
             content = bytes(task.input_content or b"")
             filename = str(task.input_metadata.get("filename", "upload.txt"))
             content_type = str(
                 task.input_metadata.get("content_type", "application/octet-stream")
             )
+            prompt_version = (
+                await PromptRepository(session).get_version(task.prompt_version_id)
+                if task.prompt_version_id
+                else None
+            )
+            if prompt_version is None:
+                raise JobPayloadError("Managed document prompt is unavailable")
             await session.commit()
         result = await process_document(
             content,
@@ -194,6 +228,7 @@ def build_job_handlers(
             content_type=content_type,
             settings=config,
             llm_client=client_factory(),
+            prompt_version=prompt_version,
         )
         await control.checkpoint()
         async with session_factory() as session:
@@ -226,6 +261,22 @@ def build_job_handlers(
             session_factory, settings=config, llm_client=client_factory()
         ).generate_storyboard(payload.media_asset_id)
 
+    async def prompt_experiment_run(job: LeasedJob, control: JobControl) -> None:
+        payload = validate_job_payload(job.job_type, job.payload)
+        if not isinstance(payload, PromptExperimentRunJobPayload):
+            raise JobPayloadError("Prompt experiment payload does not match its type")
+        await PromptExperimentRunner(session_factory, comparison_client_factory).run(
+            payload.experiment_id, checkpoint=control.checkpoint
+        )
+
+    async def provider_comparison_run(job: LeasedJob, control: JobControl) -> None:
+        payload = validate_job_payload(job.job_type, job.payload)
+        if not isinstance(payload, ProviderComparisonRunJobPayload):
+            raise JobPayloadError("Provider comparison payload does not match its type")
+        await ProviderComparisonRunner(session_factory, comparison_client_factory).run(
+            payload.comparison_id, checkpoint=control.checkpoint
+        )
+
     return {
         JobType.WORKFLOW_RUN: workflow_run,
         JobType.ACTION_EXECUTION: action_execution,
@@ -237,4 +288,6 @@ def build_job_handlers(
         JobType.DOCUMENT_PROCESSING: document_processing,
         JobType.IMAGE_GENERATION: image_generation,
         JobType.VIDEO_STORYBOARD: video_storyboard,
+        JobType.PROMPT_EXPERIMENT_RUN: prompt_experiment_run,
+        JobType.PROVIDER_COMPARISON_RUN: provider_comparison_run,
     }

@@ -31,44 +31,48 @@ class TaskBaselineRead(TaskBaselineCreate):
 class TaskImpactCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    task_type: str = Field(min_length=1, max_length=100)
     department: str | None = Field(default=None, max_length=100)
-    workflow_id: UUID | None = None
-    job_id: UUID | None = None
-    agent_run_id: UUID | None = None
-    prompt_version_id: UUID | None = None
-    provider: str = Field(min_length=1, max_length=50)
-    model: str = Field(min_length=1, max_length=200)
-    manual_duration_baseline: Decimal = Field(ge=0)
-    ai_duration_minutes: Decimal = Field(ge=0)
+    manual_duration_baseline_override: Decimal | None = Field(default=None, ge=0)
     steps_before: int = Field(ge=0)
-    steps_after: int = Field(ge=0)
     automated_steps: int = Field(ge=0)
-    output_accepted: bool
     accepted_without_editing: bool
     editing_minutes: Decimal = Field(ge=0)
     rework_count: int = Field(ge=0)
     error_count: int = Field(ge=0)
-    estimated_cost: Decimal = Field(ge=0)
 
 
-class TaskImpactRead(TaskImpactCreate):
+class TaskImpactRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     ai_task_impact_id: UUID
     task_run_id: UUID
+    task_type: str
+    department: str | None
+    workflow_id: UUID | None
+    job_id: UUID | None
+    agent_run_id: UUID | None
+    prompt_version_id: UUID | None
+    provider: str
+    model: str
+    manual_duration_baseline: Decimal
+    ai_duration_minutes: Decimal
     minutes_saved: Decimal
+    steps_before: int
+    steps_after: int
+    automated_steps: int
     automation_rate: Decimal
+    output_accepted: bool
+    accepted_without_editing: bool
+    editing_minutes: Decimal
+    rework_count: int
+    error_count: int
+    estimated_cost: Decimal
     created_at: datetime
 
 
 class UserFeedbackCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    task_type: str = Field(min_length=1, max_length=100)
-    workflow_id: UUID | None = None
-    agent_run_id: UUID | None = None
-    prompt_version_id: UUID | None = None
-    provider: str = Field(min_length=1, max_length=50)
-    model: str = Field(min_length=1, max_length=200)
     rating: int = Field(ge=1, le=5)
     helpfulness: int = Field(ge=1, le=5)
     accuracy: int = Field(ge=1, le=5)
@@ -84,6 +88,12 @@ class UserFeedbackCreate(BaseModel):
 class UserFeedbackRead(UserFeedbackCreate):
     user_feedback_id: UUID
     task_run_id: UUID
+    task_type: str
+    workflow_id: UUID | None
+    agent_run_id: UUID | None
+    prompt_version_id: UUID | None
+    provider: str
+    model: str
     actor_id: str
     version: int
     created_at: datetime

@@ -15,6 +15,25 @@ class DocumentType(StrEnum):
     UNKNOWN = "UNKNOWN"
 
 
+class DocumentInconsistency(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: str
+    severity: str
+    source_locations: list[str]
+    description: str
+    evidence_summary: str
+    detection_method: str
+    confidence: float = Field(ge=0, le=1)
+    suggested_resolution: str
+
+
+class DocumentConsistencyAnalysis(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    findings: list[DocumentInconsistency] = Field(default_factory=list, max_length=50)
+
+
 class DocumentProcessingResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -22,7 +41,7 @@ class DocumentProcessingResult(BaseModel):
     executive_summary: str
     key_points: list[str]
     missing_sections: list[str]
-    inconsistencies: list[str]
+    inconsistencies: list[DocumentInconsistency]
     risks: list[str]
     action_items: list[str]
     open_questions: list[str]

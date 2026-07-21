@@ -8,13 +8,23 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.business_impact.calculator import ImpactCalculator
-from app.core.constants import OutboxEventType
-from app.core.exceptions import M7ConflictError
+from app.core.constants import AppliedTaskStatus, OutboxEventType, UserRole
+from app.core.exceptions import (
+    AuthorizationError,
+    M7ConflictError,
+    M7ResourceNotFoundError,
+)
 from app.core.sanitization import sanitize_text
-from app.database.models import AITaskImpactModel, TaskBaselineModel, UserFeedbackModel
+from app.database.models import (
+    AITaskImpactModel,
+    AppliedWorkflowTaskModel,
+    TaskBaselineModel,
+    UserFeedbackModel,
+)
 from app.outbox.service import OutboxService
 from app.repositories.business_impact_repository import BusinessImpactRepository
 from app.repositories.feedback_repository import FeedbackRepository
+from app.repositories.applied_workflow_repository import AppliedWorkflowRepository
 from app.schemas.business_impact import (
     BusinessImpactAnalytics,
     TaskBaselineCreate,
@@ -24,6 +34,7 @@ from app.schemas.business_impact import (
     UserFeedbackCreate,
     UserFeedbackRead,
 )
+from app.service.auth_service import AuthenticatedActor
 
 
 class BusinessImpactService:
@@ -52,14 +63,50 @@ class BusinessImpactService:
         ]
 
     async def record_impact(
-        self, task_run_id: UUID, data: TaskImpactCreate
+        self,
+        task_run_id: UUID,
+        data: TaskImpactCreate,
+        *,
+        actor: AuthenticatedActor,
     ) -> TaskImpactRead:
+        task = await self._eligible_task(task_run_id, actor=actor)
+        if actor.role not in {UserRole.MANAGER, UserRole.ADMIN}:
+            raise AuthorizationError("Operator role is required to record impact")
+        baseline = await self.impacts.latest_baseline(
+            task.workflow_type.lower(), data.department
+        )
+        manual_duration = data.manual_duration_baseline_override
+        if manual_duration is None:
+            if baseline is None:
+                raise M7ConflictError("No task baseline is available")
+            manual_duration = baseline.manual_duration_minutes
+        ai_duration = Decimal(task.duration_ms or 0) / Decimal(60_000)
+        workflow_id = _metadata_uuid(task.input_metadata, "workflow_id")
+        agent_run_id = _metadata_uuid(task.input_metadata, "agent_run_id")
+        if task.provider is None or task.model is None:
+            raise M7ConflictError("Task execution provenance is incomplete")
         model = AITaskImpactModel(
             task_run_id=task_run_id,
-            **data.model_dump(),
-            minutes_saved=ImpactCalculator.minutes_saved(
-                data.manual_duration_baseline, data.ai_duration_minutes
-            ),
+            task_type=task.workflow_type.lower(),
+            department=data.department,
+            workflow_id=workflow_id,
+            job_id=task.job_id,
+            agent_run_id=agent_run_id,
+            prompt_version_id=task.prompt_version_id,
+            provider=task.provider,
+            model=task.model,
+            manual_duration_baseline=manual_duration,
+            ai_duration_minutes=ai_duration,
+            steps_before=data.steps_before,
+            steps_after=max(data.steps_before - data.automated_steps, 0),
+            automated_steps=data.automated_steps,
+            output_accepted=True,
+            accepted_without_editing=data.accepted_without_editing,
+            editing_minutes=data.editing_minutes,
+            rework_count=data.rework_count,
+            error_count=data.error_count,
+            estimated_cost=task.estimated_cost,
+            minutes_saved=ImpactCalculator.minutes_saved(manual_duration, ai_duration),
             automation_rate=ImpactCalculator.automation_rate(
                 data.automated_steps, data.steps_before
             ),
@@ -80,13 +127,29 @@ class BusinessImpactService:
         except IntegrityError as exc:
             await self.session.rollback()
             raise M7ConflictError("Impact already exists for this task run") from exc
-        return TaskImpactRead.model_validate(model, from_attributes=True)
+        return TaskImpactRead.model_validate(model)
 
     async def record_feedback(
-        self, task_run_id: UUID, data: UserFeedbackCreate, *, actor_id: str
+        self,
+        task_run_id: UUID,
+        data: UserFeedbackCreate,
+        *,
+        actor: AuthenticatedActor,
     ) -> UserFeedbackRead:
+        task = await self._eligible_task(task_run_id, actor=actor, reviewable=True)
+        actor_id = actor.actor_id
         existing = await self.feedback.get_for_actor(task_run_id, actor_id)
         values = data.model_dump(exclude={"expected_version"})
+        values.update(
+            {
+                "task_type": task.workflow_type.lower(),
+                "workflow_id": _metadata_uuid(task.input_metadata, "workflow_id"),
+                "agent_run_id": _metadata_uuid(task.input_metadata, "agent_run_id"),
+                "prompt_version_id": task.prompt_version_id,
+                "provider": task.provider or "unknown",
+                "model": task.model or "unknown",
+            }
+        )
         values["comment"] = (
             sanitize_text(data.comment, max_characters=2000) if data.comment else None
         )
@@ -123,6 +186,28 @@ class BusinessImpactService:
                 "Feedback changed or already exists; refresh and retry"
             ) from exc
         return UserFeedbackRead.model_validate(model, from_attributes=True)
+
+    async def _eligible_task(
+        self,
+        task_run_id: UUID,
+        *,
+        actor: AuthenticatedActor,
+        reviewable: bool = False,
+    ) -> AppliedWorkflowTaskModel:
+        task = await AppliedWorkflowRepository(self.session).get(task_run_id)
+        if task is None:
+            raise M7ResourceNotFoundError("Applied workflow task not found")
+        if actor.actor_id != task.created_by and actor.role not in {
+            UserRole.MANAGER,
+            UserRole.ADMIN,
+        }:
+            raise AuthorizationError("Actor cannot access this applied workflow task")
+        eligible = {AppliedTaskStatus.COMPLETED.value}
+        if reviewable:
+            eligible.add(AppliedTaskStatus.READY_FOR_REVIEW.value)
+        if task.status not in eligible:
+            raise M7ConflictError("Applied workflow task is not eligible")
+        return task
 
     async def analytics(
         self,
@@ -198,3 +283,13 @@ class BusinessImpactService:
                 for item in impacts
             ],
         )
+
+
+def _metadata_uuid(metadata: dict[str, object], field: str) -> UUID | None:
+    value = metadata.get(field)
+    if value is None:
+        return None
+    try:
+        return UUID(str(value))
+    except ValueError:
+        return None

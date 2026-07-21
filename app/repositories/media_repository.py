@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import (
@@ -47,6 +47,17 @@ class MediaRepository:
         self.session.add(model)
         await self.session.flush()
         return model
+
+    async def next_attempt_number(self, asset_id: UUID) -> int:
+        current = await self.session.scalar(
+            select(func.max(MediaGenerationAttemptModel.attempt_number)).where(
+                MediaGenerationAttemptModel.media_asset_id == asset_id
+            )
+        )
+        return int(current or 0) + 1
+
+    async def get_attempt(self, attempt_id: UUID) -> MediaGenerationAttemptModel | None:
+        return await self.session.get(MediaGenerationAttemptModel, attempt_id)
 
     async def create_review(self, model: MediaReviewModel) -> MediaReviewModel:
         self.session.add(model)

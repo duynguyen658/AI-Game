@@ -9,6 +9,8 @@ from app.core.constants import AppliedTaskStatus, AppliedWorkflowType, JobType
 from app.database.models import AppliedWorkflowTaskModel
 from app.jobs.definitions import DocumentProcessingJobPayload
 from app.jobs.queue import JobQueue
+from app.prompt_management.execution import model_configuration_hash
+from app.prompt_management.service import PromptService
 from app.repositories.applied_workflow_repository import AppliedWorkflowRepository
 from app.schemas.applied_workflow import AppliedTaskRead
 from app.service.applied_workflow_service import task_to_schema
@@ -31,6 +33,11 @@ class DocumentProcessingService:
         actor_id: str,
         commit: bool = True,
     ) -> AppliedTaskRead:
+        managed = await PromptService(self.session).resolve(
+            values={"document": "pending untrusted document"},
+            task_type="document_processing",
+        )
+        model_name = self.settings.llm_model or "mock-applied-ai"
         model = AppliedWorkflowTaskModel(
             workflow_type=AppliedWorkflowType.DOCUMENT_PROCESSING.value,
             status=AppliedTaskStatus.PENDING.value,
@@ -42,7 +49,15 @@ class DocumentProcessingService:
             },
             input_content=content,
             provider=self.settings.llm_provider,
-            model=self.settings.llm_model or "mock-applied-ai",
+            model=model_name,
+            prompt_template_id=managed.prompt_template_id,
+            prompt_version_id=managed.prompt_version_id,
+            prompt_version_number=managed.prompt_version_number,
+            prompt_content_hash=managed.content_hash,
+            model_configuration_hash=model_configuration_hash(
+                self.settings.llm_provider, model_name, {"temperature": 0}
+            ),
+            application_version=self.settings.application_version,
             created_by=actor_id,
         )
         await self.repository.create(model)

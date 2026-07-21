@@ -30,6 +30,20 @@ class BusinessImpactRepository:
         )
         return result.scalars().all()
 
+    async def latest_baseline(
+        self, task_type: str, department: str | None
+    ) -> TaskBaselineModel | None:
+        query = select(TaskBaselineModel).where(
+            TaskBaselineModel.task_type == task_type
+        )
+        if department is not None:
+            query = query.where(TaskBaselineModel.department == department)
+        return await self.session.scalar(
+            query.order_by(
+                TaskBaselineModel.version.desc(), TaskBaselineModel.created_at.desc()
+            )
+        )
+
     async def create_impact(self, model: AITaskImpactModel) -> AITaskImpactModel:
         self.session.add(model)
         await self.session.flush()

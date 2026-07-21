@@ -55,7 +55,9 @@ async def record_task_impact(
     actor: Annotated[AuthenticatedActor, Depends(get_current_actor)],
 ) -> TaskImpactRead:
     AuthService().require_operator(actor)
-    return await BusinessImpactService(session).record_impact(task_run_id, data)
+    return await BusinessImpactService(session).record_impact(
+        task_run_id, data, actor=actor
+    )
 
 
 @router.post("/task-runs/{task_run_id}/feedback", response_model=UserFeedbackRead)
@@ -66,7 +68,7 @@ async def record_task_feedback(
     actor: Annotated[AuthenticatedActor, Depends(get_current_actor)],
 ) -> UserFeedbackRead:
     return await BusinessImpactService(session).record_feedback(
-        task_run_id, data, actor_id=actor.actor_id
+        task_run_id, data, actor=actor
     )
 
 

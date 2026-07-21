@@ -39,10 +39,29 @@ class AppliedWorkflowService:
         model.status = status.value
         model.result = result
         model.completed_at = datetime.now(UTC)
+        model.duration_ms = _duration_ms(model.started_at, model.completed_at)
         if commit:
             await self.session.commit()
         return task_to_schema(model)
 
+    async def mark_processing(
+        self, task_run_id: UUID, *, commit: bool = True
+    ) -> AppliedWorkflowTaskModel:
+        model = await self.required(task_run_id)
+        model.status = AppliedTaskStatus.PROCESSING.value
+        model.started_at = model.started_at or datetime.now(UTC)
+        model.error_code = None
+        model.error_message = None
+        if commit:
+            await self.session.commit()
+        return model
+
 
 def task_to_schema(model: AppliedWorkflowTaskModel) -> AppliedTaskRead:
     return AppliedTaskRead.model_validate(model, from_attributes=True)
+
+
+def _duration_ms(started_at: datetime | None, completed_at: datetime) -> int:
+    if started_at is None:
+        return 0
+    return max(int((completed_at - started_at).total_seconds() * 1000), 0)

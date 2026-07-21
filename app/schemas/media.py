@@ -43,6 +43,11 @@ class MediaAssetRead(BaseModel):
     provider: str
     model: str
     prompt_version_id: UUID | None
+    prompt_template_id: UUID | None
+    prompt_version_number: int | None
+    prompt_content_hash: str | None
+    model_configuration_hash: str | None
+    application_version: str | None
     generation_prompt: str
     negative_prompt: str | None
     storage_uri: str | None
@@ -61,6 +66,9 @@ class MediaAssetRead(BaseModel):
     rejected_by: str | None
     rejected_at: datetime | None
     rejection_reason: str | None
+    error_code: str | None
+    error_message: str | None
+    completed_at: datetime | None
 
 
 class VideoStoryboardRequest(BaseModel):

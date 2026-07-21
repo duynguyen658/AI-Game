@@ -20,13 +20,14 @@ from app.core.exceptions import (
 from app.database.session import AsyncSessionLocal
 from app.jobs.definitions import LeasedJob
 from app.jobs.queue import JobQueue
+from app.jobs.lifecycle import JobTerminalReconciler
 from app.jobs.retry import classify_job_error
 from app.observability.context import operation_context
 from app.observability.metrics import JOB_DURATION, OUTBOX_DISPATCHER_ERRORS
 from app.observability.tracing import traced_operation
 from app.outbox.dispatcher import OutboxDispatcher
 from app.repositories.job_repository import JobRepository
-from app.core.constants import JobErrorClassification, JobType, WorkerStatus
+from app.core.constants import JobErrorClassification, JobStatus, JobType, WorkerStatus
 
 logger = structlog.get_logger()
 
@@ -218,18 +219,31 @@ class JobWorker:
             else "Background job handler failed"
         )
         async with self.session_factory() as session:
-            await JobQueue(session, settings=self.settings).fail(
+            result = await JobQueue(session, settings=self.settings).fail(
                 job.job_id,
                 worker_id=self.worker_id,
                 error_code=code,
                 error_message=message,
                 retryable=retryable,
             )
+            if result.status == JobStatus.DEAD_LETTER:
+                await JobTerminalReconciler(session).reconcile(
+                    job,
+                    cancelled=False,
+                    error_code=code,
+                    error_message=message,
+                )
 
     async def _cancel(self, job: LeasedJob) -> None:
         async with self.session_factory() as session:
             await JobQueue(session, settings=self.settings).mark_cancelled(
                 job.job_id, worker_id=self.worker_id
+            )
+            await JobTerminalReconciler(session).reconcile(
+                job,
+                cancelled=True,
+                error_code="JOB_CANCELLED",
+                error_message="Background job was cancelled",
             )
 
     async def _worker_heartbeat(
