@@ -2,6 +2,7 @@ import Image from "next/image";
 import { redirect } from "next/navigation";
 import { LoginForm } from "./login-form";
 import { getSession } from "@/lib/auth/session";
+import { getAuthMode } from "@/lib/env/server";
 
 export const metadata = { title: "Sign in" };
 
@@ -23,7 +24,7 @@ export default async function LoginPage() {
         <section className="flex items-center bg-[#111a1f]/92 px-5 py-10 sm:px-10 lg:px-14">
           <div className="w-full max-w-md">
             <div className="mb-10 flex items-center gap-3">
-              <span className="grid size-10 place-items-center rounded-md bg-[#0f8d99] font-mono text-sm font-bold">CL</span>
+              <span className="grid size-10 place-items-center rounded-md bg-[#08717b] font-mono text-sm font-bold">CL</span>
               <div>
                 <p className="font-semibold">Cyber Legends</p>
                 <p className="text-sm text-white/55">AI Operations Workspace</p>
@@ -33,7 +34,7 @@ export default async function LoginPage() {
             <p className="mt-3 max-w-sm text-sm leading-6 text-white/65">
               Run workflows, review decisions, and measure impact from one operational workspace.
             </p>
-            <LoginForm />
+            <LoginForm mode={getAuthMode()} />
           </div>
         </section>
         <div className="hidden items-end justify-end p-10 lg:flex">

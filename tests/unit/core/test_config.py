@@ -65,6 +65,26 @@ def test_database_url_must_use_async_postgres() -> None:
         )
 
 
+def test_production_rejects_demo_provider_aliases() -> None:
+    with pytest.raises(ValidationError, match="DEMO_PROVIDER_ALIASES"):
+        Settings(
+            _env_file=None,
+            app_env="production",
+            database_url="postgresql+asyncpg://user:pass@localhost:5432/app",
+            llm_provider="mock",
+            postgres_password="safe-postgres-password",
+            jwt_secret_key="safe-jwt-secret",
+            n8n_webhook_secret="safe-webhook-secret",
+            approval_token_secret="safe-approval-secret",
+            metrics_token="safe-metrics-token",
+            jwt_algorithm="RS256",
+            jwt_jwks_url="https://identity.example.test/.well-known/jwks.json",
+            jwt_issuer="https://identity.example.test",
+            jwt_audience="cyber-legends",
+            demo_provider_aliases=True,
+        )
+
+
 def test_outbox_heartbeat_and_retry_ranges_must_be_safe() -> None:
     with pytest.raises(ValidationError, match="OUTBOX_HEARTBEAT_SECONDS"):
         Settings(

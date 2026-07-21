@@ -1,51 +1,103 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { cookies } from "next/headers";
 import { isUserRole, type SessionUser } from "./types";
+import { getAuthMode, requireServerEnv, type AuthMode } from "@/lib/env/server";
+import { shouldUseSecureCookies } from "./cookie-policy";
 
-export const SESSION_COOKIE = "cl_demo_session";
+export const SESSION_COOKIE = "cl_session";
+export const OIDC_TRANSACTION_COOKIE = "cl_oidc_transaction";
 
-function secret() {
-  const configured = process.env.DEMO_SESSION_SECRET;
-  if (configured) return configured;
-  if (process.env.NODE_ENV === "production") {
-    throw new Error("DEMO_SESSION_SECRET is required in production");
-  }
-  return "local-development-session-secret-not-for-production";
+export type AuthenticatedSession = SessionUser & {
+  mode: AuthMode;
+  expiresAt: number;
+  accessToken?: string;
+  refreshToken?: string;
+  idToken?: string;
+};
+
+export type OidcTransaction = {
+  state: string;
+  nonce: string;
+  codeVerifier: string;
+  expiresAt: number;
+};
+
+function encryptionKey() {
+  const configured =
+    process.env.SESSION_SECRET ??
+    (process.env.NODE_ENV === "production"
+      ? requireServerEnv("SESSION_SECRET")
+      : "local-development-session-secret-not-for-production");
+  if (configured.length < 32) throw new Error("SESSION_SECRET must be at least 32 characters");
+  return createHash("sha256").update(configured).digest();
 }
 
-function sign(payload: string) {
-  return createHmac("sha256", secret()).update(payload).digest("base64url");
+function encrypt(value: object) {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", encryptionKey(), iv);
+  const ciphertext = Buffer.concat([
+    cipher.update(JSON.stringify(value), "utf8"),
+    cipher.final(),
+  ]);
+  return [iv, cipher.getAuthTag(), ciphertext]
+    .map((part) => part.toString("base64url"))
+    .join(".");
 }
 
-export function encodeSession(user: SessionUser) {
-  const payload = Buffer.from(JSON.stringify(user)).toString("base64url");
-  return `${payload}.${sign(payload)}`;
-}
-
-export function decodeSession(value: string | undefined): SessionUser | null {
+function decrypt<T>(value: string | undefined): T | null {
   if (!value) return null;
-  const [payload, signature] = value.split(".");
-  if (!payload || !signature) return null;
-  const expected = Buffer.from(sign(payload));
-  const actual = Buffer.from(signature);
-  if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) {
-    return null;
-  }
   try {
-    const parsed = JSON.parse(
-      Buffer.from(payload, "base64url").toString("utf8"),
-    ) as Partial<SessionUser>;
-    if (
-      typeof parsed.actorId !== "string" ||
-      typeof parsed.displayName !== "string" ||
-      !isUserRole(parsed.role)
-    ) {
-      return null;
-    }
-    return parsed as SessionUser;
+    const [ivValue, tagValue, ciphertextValue] = value.split(".");
+    if (!ivValue || !tagValue || !ciphertextValue) return null;
+    const decipher = createDecipheriv(
+      "aes-256-gcm",
+      encryptionKey(),
+      Buffer.from(ivValue, "base64url"),
+    );
+    decipher.setAuthTag(Buffer.from(tagValue, "base64url"));
+    const plaintext = Buffer.concat([
+      decipher.update(Buffer.from(ciphertextValue, "base64url")),
+      decipher.final(),
+    ]).toString("utf8");
+    return JSON.parse(plaintext) as T;
   } catch {
     return null;
   }
+}
+
+export function encodeSession(session: AuthenticatedSession) {
+  return encrypt(session);
+}
+
+export function decodeSession(value: string | undefined): AuthenticatedSession | null {
+  const parsed = decrypt<Partial<AuthenticatedSession>>(value);
+  if (
+    !parsed ||
+    typeof parsed.actorId !== "string" ||
+    typeof parsed.displayName !== "string" ||
+    !isUserRole(parsed.role) ||
+    (parsed.mode !== "demo" && parsed.mode !== "oidc") ||
+    typeof parsed.expiresAt !== "number" ||
+    parsed.expiresAt <= Math.floor(Date.now() / 1000)
+  ) return null;
+  return parsed as AuthenticatedSession;
+}
+
+export function encodeOidcTransaction(transaction: OidcTransaction) {
+  return encrypt(transaction);
+}
+
+export function decodeOidcTransaction(value: string | undefined): OidcTransaction | null {
+  const parsed = decrypt<Partial<OidcTransaction>>(value);
+  if (
+    !parsed ||
+    typeof parsed.state !== "string" ||
+    typeof parsed.nonce !== "string" ||
+    typeof parsed.codeVerifier !== "string" ||
+    typeof parsed.expiresAt !== "number" ||
+    parsed.expiresAt <= Math.floor(Date.now() / 1000)
+  ) return null;
+  return parsed as OidcTransaction;
 }
 
 export async function getSession() {
@@ -53,5 +105,16 @@ export async function getSession() {
 }
 
 export function demoAuthEnabled() {
-  return process.env.DEMO_AUTH_ENABLED !== "false";
+  return getAuthMode() === "demo" && process.env.DEMO_AUTH_ENABLED === "true";
 }
+
+export const sessionCookieOptions = {
+  httpOnly: true,
+  sameSite: "lax" as const,
+  secure: shouldUseSecureCookies(
+    process.env.NODE_ENV,
+    process.env.AUTH_MODE === "demo" ? "demo" : "oidc",
+    process.env.ALLOW_PRODUCTION_DEMO === "true",
+  ),
+  path: "/",
+};

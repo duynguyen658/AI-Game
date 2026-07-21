@@ -1,7 +1,7 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { ArrowRight, ShieldAlert } from "lucide-react";
+import { ArrowRight, ShieldAlert, ShieldCheck } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
@@ -9,6 +9,7 @@ import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { interactiveRoles, roleLabels } from "@/lib/auth/types";
+import type { AuthMode } from "@/lib/env/server";
 
 const schema = z.object({
   displayName: z.string().trim().min(2, "Enter at least 2 characters").max(100),
@@ -17,7 +18,7 @@ const schema = z.object({
 });
 type Values = z.infer<typeof schema>;
 
-export function LoginForm() {
+export function LoginForm({ mode }: { mode: AuthMode }) {
   const router = useRouter();
   const [serverError, setServerError] = useState<string | null>(null);
   const {
@@ -43,6 +44,22 @@ export function LoginForm() {
     }
     router.replace("/dashboard");
     router.refresh();
+  }
+
+  if (mode === "oidc") {
+    return (
+      <div className="mt-8 space-y-4">
+        <div className="rounded-md border border-emerald-200/25 bg-emerald-100/8 p-3 text-xs leading-5 text-emerald-50/80">
+          <div className="flex gap-2">
+            <ShieldCheck aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
+            <p>Continue with your organization identity. Authorization remains enforced by the API.</p>
+          </div>
+        </div>
+        <Button asChild size="lg" className="w-full">
+          <a href="/api/auth/login">Continue with SSO <ArrowRight aria-hidden="true" className="size-4" /></a>
+        </Button>
+      </div>
+    );
   }
 
   return (
