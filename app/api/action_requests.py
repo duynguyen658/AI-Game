@@ -15,6 +15,7 @@ from app.schemas.action_request import (
     ActionRequestRead,
 )
 from app.service.action_service import ActionService
+from app.operations.rate_limit import enforce_sensitive_rate_limit
 from app.service.auth_service import AuthenticatedActor, AuthService
 
 router = APIRouter(prefix="/action-requests", tags=["Agent Actions"])
@@ -54,7 +55,11 @@ async def list_action_executions(
     return await ActionService(session).list_executions(action_request_id)
 
 
-@router.post("/{action_request_id}/approve", response_model=ActionRequestRead)
+@router.post(
+    "/{action_request_id}/approve",
+    response_model=ActionRequestRead,
+    dependencies=[Depends(enforce_sensitive_rate_limit)],
+)
 async def approve_action_request(
     action_request_id: UUID,
     payload: ActionApproveRequest,
@@ -68,7 +73,11 @@ async def approve_action_request(
     )
 
 
-@router.post("/{action_request_id}/reject", response_model=ActionRequestRead)
+@router.post(
+    "/{action_request_id}/reject",
+    response_model=ActionRequestRead,
+    dependencies=[Depends(enforce_sensitive_rate_limit)],
+)
 async def reject_action_request(
     action_request_id: UUID,
     payload: ActionRejectRequest,
@@ -83,7 +92,11 @@ async def reject_action_request(
     )
 
 
-@router.post("/{action_request_id}/execute", response_model=ActionExecutionRead)
+@router.post(
+    "/{action_request_id}/execute",
+    response_model=ActionExecutionRead,
+    dependencies=[Depends(enforce_sensitive_rate_limit)],
+)
 async def execute_action_request(
     action_request_id: UUID,
     payload: ActionExecuteRequest,

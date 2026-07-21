@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -10,7 +11,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agentic.runtime.orchestrator import AgenticOrchestrator
 from app.core.config import get_settings
-from app.core.constants import CampaignStatus, MemoryEventType, WorkflowStep
+from app.core.constants import (
+    CampaignStatus,
+    MemoryEventType,
+    OutboxEventType,
+    WorkflowStep,
+)
 from app.core.exceptions import (
     ApplicationError,
     AgentExecutionError,
@@ -31,6 +37,15 @@ from app.core.exceptions import (
     WorkflowNotFoundError,
 )
 from app.llm.base import LLMClient
+from app.outbox.service import OutboxService
+from app.observability.metrics import (
+    WORKFLOW_DURATION,
+    WORKFLOW_FAILURES,
+    WORKFLOW_MANUAL_REVIEWS,
+    WORKFLOW_RETRIES,
+    WORKFLOW_RUNS,
+)
+from app.observability.tracing import traced_operation
 from app.core.sanitization import sanitize_text
 from app.repositories.campaign_repository import CampaignRepository
 from app.repositories.workflow_repository import WorkflowRepository
@@ -88,8 +103,13 @@ class CampaignWorkflow:
         self.workflow_repository = WorkflowRepository(session)
         self.orchestrator = orchestrator or AgenticOrchestrator(session, llm_client)
         self.memory_service = MemoryService(session)
+        self.outbox = OutboxService(session, settings=self.settings)
 
     async def run_to_pending_approval(self, workflow_id: UUID) -> WorkflowRun:
+        with traced_operation("workflow.run", workflow_id=str(workflow_id)):
+            return await self._run_to_pending_approval(workflow_id)
+
+    async def _run_to_pending_approval(self, workflow_id: UUID) -> WorkflowRun:
         try:
             while True:
                 snapshot = await self._load_snapshot(workflow_id)
@@ -312,6 +332,29 @@ class CampaignWorkflow:
                 CampaignStatus.GENERATING,
                 WorkflowStep.GENERATE_CONTENT,
             )
+        if not workflow_retry:
+            await self.outbox.add_event(
+                event_type=OutboxEventType.WORKFLOW_COMPLETED,
+                aggregate_type="workflow",
+                aggregate_id=str(workflow.workflow_id),
+                payload={
+                    "workflow_id": str(workflow.workflow_id),
+                    "campaign_id": str(campaign.campaign_id),
+                    "status": workflow.status,
+                    "quality_score": quality_review.quality_score,
+                },
+                idempotency_key=(
+                    f"workflow:{workflow.workflow_id}:terminal:{workflow.status}"
+                ),
+            )
+            WORKFLOW_RUNS.labels(workflow.status).inc()
+            WORKFLOW_DURATION.labels(workflow.status).observe(
+                max((datetime.now(UTC) - workflow.started_at).total_seconds(), 0)
+            )
+            if workflow.status == CampaignStatus.MANUAL_REVIEW_REQUIRED.value:
+                WORKFLOW_MANUAL_REVIEWS.inc()
+        else:
+            WORKFLOW_RETRIES.inc()
         await self.session.commit()
         await self.memory_service.record_event(
             campaign_id=campaign.campaign_id,
@@ -430,6 +473,19 @@ class CampaignWorkflow:
                     campaign,
                     CampaignStatus.FAILED,
                 )
+                await self.outbox.add_event(
+                    event_type=OutboxEventType.WORKFLOW_FAILED,
+                    aggregate_type="workflow",
+                    aggregate_id=str(workflow.workflow_id),
+                    payload={
+                        "workflow_id": str(workflow.workflow_id),
+                        "campaign_id": str(campaign.campaign_id),
+                        "error_code": exc.error_code,
+                    },
+                    idempotency_key=f"workflow:{workflow.workflow_id}:failed",
+                )
+                WORKFLOW_FAILURES.inc()
+                WORKFLOW_RUNS.labels(CampaignStatus.FAILED.value).inc()
                 await self.session.commit()
             else:
                 await self.session.rollback()

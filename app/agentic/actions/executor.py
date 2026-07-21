@@ -21,6 +21,7 @@ from app.core.constants import (
     CampaignStatus,
     MemoryEventType,
     MemoryRecordStatus,
+    OutboxEventType,
     PolicyDecision,
     UserRole,
 )
@@ -42,6 +43,12 @@ from app.core.exceptions import (
 from app.core.sanitization import sanitize_json, sanitize_text
 from app.database.models import AgentActionExecutionModel, AgentActionRequestModel
 from app.database.m5_integrity import is_action_execution_duplicate
+from app.outbox.service import OutboxService
+from app.observability.metrics import (
+    ACTION_EXECUTION_FAILURES,
+    ACTION_EXECUTIONS,
+)
+from app.observability.tracing import traced_operation
 from app.repositories.action_execution_repository import ActionExecutionRepository
 from app.repositories.action_request_repository import ActionRequestRepository
 from app.repositories.campaign_repository import CampaignRepository
@@ -71,8 +78,19 @@ class ControlledActionExecutor:
         self.workflows = WorkflowRepository(session)
         self.policy = PolicyEngine()
         self.memories = memory_service or MemoryService(session, settings=self.settings)
+        self.outbox = OutboxService(session, settings=self.settings)
 
     async def execute(
+        self, action_request_id: UUID, *, expected_version: int | None = None
+    ) -> ActionExecutionRead:
+        with traced_operation(
+            "action.execute", action_request_id=str(action_request_id)
+        ):
+            return await self._execute(
+                action_request_id, expected_version=expected_version
+            )
+
+    async def _execute(
         self, action_request_id: UUID, *, expected_version: int | None = None
     ) -> ActionExecutionRead:
         request, execution, definition, guard = await self._reserve(
@@ -338,7 +356,23 @@ class ControlledActionExecutor:
             duration_ms=duration_ms,
         )
         await self.requests.mark_completed(current_request)
+        await self.outbox.add_event(
+            event_type=OutboxEventType.ACTION_COMPLETED,
+            aggregate_type="action_execution",
+            aggregate_id=str(current_execution.action_execution_id),
+            payload={
+                "action_execution_id": str(current_execution.action_execution_id),
+                "action_request_id": str(current_request.action_request_id),
+                "action_name": current_request.action_name,
+            },
+            idempotency_key=(
+                f"action-execution:{current_execution.action_execution_id}:completed"
+            ),
+        )
         await self.session.commit()
+        ACTION_EXECUTIONS.labels(
+            current_request.action_name, ActionExecutionStatus.COMPLETED.value
+        ).inc()
         await self._record_terminal_memory(
             request_id,
             execution_id,
@@ -376,7 +410,25 @@ class ControlledActionExecutor:
             duration_ms=duration_ms,
         )
         await self.requests.mark_failed(current_request)
+        await self.outbox.add_event(
+            event_type=OutboxEventType.ACTION_FAILED,
+            aggregate_type="action_execution",
+            aggregate_id=str(current_execution.action_execution_id),
+            payload={
+                "action_execution_id": str(current_execution.action_execution_id),
+                "action_request_id": str(current_request.action_request_id),
+                "action_name": current_request.action_name,
+                "error_code": code,
+            },
+            idempotency_key=(
+                f"action-execution:{current_execution.action_execution_id}:failed"
+            ),
+        )
         await self.session.commit()
+        ACTION_EXECUTIONS.labels(
+            current_request.action_name, ActionExecutionStatus.FAILED.value
+        ).inc()
+        ACTION_EXECUTION_FAILURES.labels(current_request.action_name).inc()
         await self._record_terminal_memory(
             request_id,
             execution_id,
@@ -498,6 +550,17 @@ class ControlledActionExecutor:
                 failed,
                 error_code=code,
                 error_message=message,
+            )
+            await self.outbox.add_event(
+                event_type=OutboxEventType.MEMORY_RECONCILIATION_REQUIRED,
+                aggregate_type="action_execution",
+                aggregate_id=str(execution_id),
+                payload={
+                    "action_execution_id": str(execution_id),
+                    "action_request_id": str(request_id),
+                    "error_code": code,
+                },
+                idempotency_key=f"action-execution:{execution_id}:memory-reconciliation",
             )
             await self.session.commit()
 

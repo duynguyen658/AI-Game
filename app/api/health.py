@@ -1,14 +1,19 @@
 from datetime import UTC, datetime
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Response, status
 
-from app.core.exceptions import DatabaseUnavailableError
-from app.database.session import check_database_connection
+from app.api.dependencies import SessionDependency
+from app.operations.health import readiness_report
 
-router = APIRouter(prefix="/health", tags=["Health"])
+router = APIRouter(tags=["Health"])
 
 
-@router.get("")
+@router.get("/live")
+async def liveness_check() -> dict[str, str]:
+    return {"status": "alive", "timestamp": datetime.now(UTC).isoformat()}
+
+
+@router.get("/health")
 async def health_check() -> dict[str, str]:
     return {
         "status": "healthy",
@@ -17,14 +22,15 @@ async def health_check() -> dict[str, str]:
 
 
 @router.get("/ready")
-async def readiness_check() -> dict[str, str]:
-    try:
-        await check_database_connection()
-    except Exception as exc:
-        raise DatabaseUnavailableError("Database is not ready") from exc
-
+@router.get("/health/ready", include_in_schema=False)
+async def readiness_check(
+    session: SessionDependency, response: Response
+) -> dict[str, object]:
+    ready, checks = await readiness_report(session)
+    if not ready:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
     return {
-        "status": "ready",
-        "database": "ok",
+        "status": "ready" if ready else "not_ready",
+        "checks": checks,
         "timestamp": datetime.now(UTC).isoformat(),
     }

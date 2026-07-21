@@ -216,3 +216,39 @@ class PolicyDeniedError(ApplicationError):
 
 class MemoryEntryNotFoundError(ApplicationError):
     error_code = "MEMORY_ENTRY_NOT_FOUND"
+
+
+class JobNotFoundError(ApplicationError):
+    error_code = "JOB_NOT_FOUND"
+
+
+class JobConflictError(ApplicationError):
+    error_code = "JOB_CONFLICT"
+
+
+class JobLeaseLostError(ApplicationError):
+    error_code = "JOB_LEASE_LOST"
+
+
+class JobPayloadError(ApplicationError):
+    error_code = "JOB_PAYLOAD_INVALID"
+
+
+class JobCancelledError(ApplicationError):
+    error_code = "JOB_CANCELLED"
+
+
+class AlertNotFoundError(ApplicationError):
+    error_code = "ALERT_NOT_FOUND"
+
+
+class EvaluationNotFoundError(ApplicationError):
+    error_code = "EVALUATION_NOT_FOUND"
+
+
+class EvaluationConflictError(ApplicationError):
+    error_code = "EVALUATION_CONFLICT"
+
+
+class RateLimitExceededError(ApplicationError):
+    error_code = "RATE_LIMIT_EXCEEDED"

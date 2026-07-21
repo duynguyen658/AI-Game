@@ -1,4 +1,7 @@
 import json
+import time
+from contextlib import contextmanager
+from collections.abc import Iterator
 from typing import Any, TypeVar, cast
 
 from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI
@@ -7,6 +10,14 @@ from pydantic import BaseModel
 from app.core.config import Settings
 from app.core.exceptions import LLMProviderError, LLMResponseError, LLMTimeoutError
 from app.llm.agent_turn import AgentMessage, AgentToolRequest, AgentTurn, LLMUsage
+from app.observability.metrics import (
+    LLM_DURATION,
+    LLM_FAILURES,
+    LLM_INPUT_TOKENS,
+    LLM_OUTPUT_TOKENS,
+    LLM_REQUESTS,
+)
+from app.observability.tracing import traced_operation
 
 OutputT = TypeVar("OutputT", bound=BaseModel)
 
@@ -30,6 +41,20 @@ class OpenAILLMClient:
         user_prompt: str,
         output_schema: type[OutputT],
     ) -> OutputT:
+        with self._observe_request("structured_output"):
+            return await self._generate_structured(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                output_schema=output_schema,
+            )
+
+    async def _generate_structured(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        output_schema: type[OutputT],
+    ) -> OutputT:
         try:
             completion = await self.client.beta.chat.completions.parse(
                 model=self.model,
@@ -47,9 +72,26 @@ class OpenAILLMClient:
         parsed = completion.choices[0].message.parsed
         if parsed is None:
             raise LLMProviderError("LLM provider returned an empty structured response")
+        self._record_usage(completion.usage)
         return parsed
 
     async def run_agent_turn(
+        self,
+        *,
+        system_prompt: str,
+        messages: list[AgentMessage],
+        tools: list[dict[str, Any]],
+        output_schema: type[OutputT],
+    ) -> AgentTurn:
+        with self._observe_request("agent_turn"):
+            return await self._run_agent_turn(
+                system_prompt=system_prompt,
+                messages=messages,
+                tools=tools,
+                output_schema=output_schema,
+            )
+
+    async def _run_agent_turn(
         self,
         *,
         system_prompt: str,
@@ -93,6 +135,7 @@ class OpenAILLMClient:
 
         message = completion.choices[0].message
         usage = completion.usage
+        self._record_usage(usage)
         if message.tool_calls:
             requests: list[AgentToolRequest] = []
             for call in message.tool_calls:
@@ -140,3 +183,39 @@ class OpenAILLMClient:
                 else None
             ),
         )
+
+    @contextmanager
+    def _observe_request(self, operation: str) -> Iterator[None]:
+        provider = "openai"
+        model = self.model or "unconfigured"
+        started = time.perf_counter()
+        status = "success"
+        LLM_REQUESTS.labels(provider, model).inc()
+        try:
+            with traced_operation(
+                "llm.request",
+                provider=provider,
+                model=model,
+                operation=operation,
+            ):
+                yield
+        except Exception:
+            status = "error"
+            LLM_FAILURES.labels(provider, model).inc()
+            raise
+        finally:
+            LLM_DURATION.labels(provider, model, status).observe(
+                time.perf_counter() - started
+            )
+
+    def _record_usage(self, usage: object | None) -> None:
+        if usage is None:
+            return
+        provider = "openai"
+        model = self.model or "unconfigured"
+        input_tokens = max(int(getattr(usage, "prompt_tokens", 0) or 0), 0)
+        output_tokens = max(int(getattr(usage, "completion_tokens", 0) or 0), 0)
+        if input_tokens:
+            LLM_INPUT_TOKENS.labels(provider, model).inc(input_tokens)
+        if output_tokens:
+            LLM_OUTPUT_TOKENS.labels(provider, model).inc(output_tokens)

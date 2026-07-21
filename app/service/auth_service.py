@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
-from jose import JWTError, jwt  # type: ignore[import-untyped]
+import jwt
+from jwt.exceptions import InvalidTokenError
 
 from app.core.config import get_settings
 from app.core.constants import UserRole
@@ -50,8 +51,14 @@ class AuthService:
                 token,
                 self.settings.jwt_secret_key.get_secret_value(),
                 algorithms=[self.settings.jwt_algorithm],
+                issuer=self.settings.jwt_issuer,
+                audience=self.settings.jwt_audience,
+                options={
+                    "verify_iss": self.settings.jwt_issuer is not None,
+                    "verify_aud": self.settings.jwt_audience is not None,
+                },
             )
-        except JWTError as exc:
+        except InvalidTokenError as exc:
             raise AuthenticationError("Invalid authentication token") from exc
         subject = payload.get("sub")
         role = payload.get("role")
@@ -84,3 +91,7 @@ class AuthService:
         minimum = UserRole(required_role) if required_role else UserRole.ADMIN
         if not role_satisfies_requirement(actor.role, minimum):
             raise AuthorizationError("Actor role cannot execute this action")
+
+    def require_operator(self, actor: AuthenticatedActor) -> None:
+        if actor.role not in {UserRole.MANAGER, UserRole.ADMIN}:
+            raise AuthorizationError("Operator role is required")

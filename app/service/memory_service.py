@@ -27,6 +27,7 @@ from app.repositories.campaign_repository import CampaignRepository
 from app.repositories.memory_repository import MemoryRepository
 from app.repositories.workflow_repository import WorkflowRepository
 from app.schemas.memory_entry import MemoryEntryCreate, MemoryEntryRead
+from app.observability.tracing import traced_operation
 from app.service.mappers import memory_entry_to_schema
 
 
@@ -45,6 +46,40 @@ class MemoryService:
         self.summarizer = DeterministicMemorySummarizer()
 
     async def record_event(
+        self,
+        *,
+        campaign_id: str,
+        event_type: MemoryEventType,
+        summary: object,
+        metadata: dict[str, Any] | None = None,
+        workflow_id: UUID | None = None,
+        agent_run_id: UUID | None = None,
+        action_request_id: UUID | None = None,
+        action_execution_id: UUID | None = None,
+        memory_type: MemoryType = MemoryType.EPISODIC,
+        importance: int = 3,
+        expires_at: datetime | None = None,
+    ) -> MemoryEntryRead:
+        with traced_operation(
+            "memory.record",
+            event_type=event_type.value,
+            campaign_id=campaign_id,
+        ):
+            return await self._record_event(
+                campaign_id=campaign_id,
+                event_type=event_type,
+                summary=summary,
+                metadata=metadata,
+                workflow_id=workflow_id,
+                agent_run_id=agent_run_id,
+                action_request_id=action_request_id,
+                action_execution_id=action_execution_id,
+                memory_type=memory_type,
+                importance=importance,
+                expires_at=expires_at,
+            )
+
+    async def _record_event(
         self,
         *,
         campaign_id: str,

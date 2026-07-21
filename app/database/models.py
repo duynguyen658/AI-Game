@@ -5,10 +5,12 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     Date,
     DateTime,
     ForeignKey,
+    Float,
     Index,
     Integer,
     String,
@@ -23,10 +25,16 @@ from app.core.constants import (
     ACTIVE_WORKFLOW_STATUS_VALUES,
     ActionExecutionStatus,
     ActionRequestStatus,
+    AlertStatus,
     AgentRunStatus,
     CampaignStatus,
+    EvaluationResultStatus,
+    EvaluationRunStatus,
+    JobAttemptStatus,
+    JobStatus,
     MemoryRecordStatus,
     MemoryType,
+    OutboxStatus,
     WorkflowStep,
 )
 from app.database.base import Base, utc_now
@@ -615,6 +623,368 @@ class ApprovalRecordModel(Base):
 
     campaign: Mapped[CampaignModel] = relationship(back_populates="approvals")
     workflow_run: Mapped[WorkflowRunModel] = relationship(back_populates="approvals")
+
+
+class BackgroundJobModel(Base):
+    __tablename__ = "background_jobs"
+    __table_args__ = (
+        CheckConstraint(
+            "attempt_count >= 0", name="ck_background_jobs_attempt_nonnegative"
+        ),
+        CheckConstraint(
+            "max_attempts > 0", name="ck_background_jobs_max_attempts_positive"
+        ),
+        CheckConstraint(
+            "priority >= 0 AND priority <= 100",
+            name="ck_background_jobs_priority_range",
+        ),
+        UniqueConstraint("idempotency_key", name="uq_background_jobs_idempotency"),
+        Index(
+            "ix_background_jobs_lease_order",
+            "status",
+            "available_at",
+            "priority",
+            "created_at",
+        ),
+        Index("ix_background_jobs_lease_expiry", "status", "lease_expires_at"),
+        Index("ix_background_jobs_type_created", "job_type", "created_at"),
+    )
+
+    job_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    job_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(50), nullable=False, default=JobStatus.PENDING.value
+    )
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=50)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    available_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    locked_by: Mapped[str | None] = mapped_column(String(200))
+    locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cancel_requested: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    idempotency_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    correlation_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    trace_id: Mapped[str | None] = mapped_column(String(64))
+    created_by: Mapped[str] = mapped_column(String(200), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_code: Mapped[str | None] = mapped_column(String(100))
+    error_message: Mapped[str | None] = mapped_column(String(2000))
+
+    attempts: Mapped[list[JobAttemptModel]] = relationship(
+        back_populates="job", cascade="all, delete-orphan"
+    )
+
+
+class JobAttemptModel(Base):
+    __tablename__ = "job_attempts"
+    __table_args__ = (
+        CheckConstraint("attempt_number > 0", name="ck_job_attempts_number_positive"),
+        CheckConstraint(
+            "duration_ms IS NULL OR duration_ms >= 0",
+            name="ck_job_attempts_duration_nonnegative",
+        ),
+        UniqueConstraint("job_id", "attempt_number", name="uq_job_attempts_job_number"),
+        Index("ix_job_attempts_job_started", "job_id", "started_at"),
+    )
+
+    job_attempt_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    job_id: Mapped[UUID] = mapped_column(
+        ForeignKey("background_jobs.job_id", ondelete="CASCADE"), nullable=False
+    )
+    attempt_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    worker_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(50), nullable=False, default=JobAttemptStatus.RUNNING.value
+    )
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    duration_ms: Mapped[int | None] = mapped_column(Integer)
+    error_code: Mapped[str | None] = mapped_column(String(100))
+    error_message: Mapped[str | None] = mapped_column(String(2000))
+
+    job: Mapped[BackgroundJobModel] = relationship(back_populates="attempts")
+
+
+class WorkerHeartbeatModel(Base):
+    __tablename__ = "worker_heartbeats"
+
+    worker_id: Mapped[str] = mapped_column(String(200), primary_key=True)
+    status: Mapped[str] = mapped_column(String(50), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now, index=True
+    )
+    current_job_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+    processed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+class OutboxEventModel(Base):
+    __tablename__ = "outbox_events"
+    __table_args__ = (
+        CheckConstraint(
+            "attempt_count >= 0", name="ck_outbox_events_attempt_nonnegative"
+        ),
+        UniqueConstraint("idempotency_key", name="uq_outbox_events_idempotency"),
+        Index(
+            "ix_outbox_events_dispatch",
+            "status",
+            "available_at",
+            "created_at",
+        ),
+        Index("ix_outbox_events_aggregate", "aggregate_type", "aggregate_id"),
+        Index("ix_outbox_events_locked", "status", "locked_at"),
+    )
+
+    outbox_event_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    event_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    aggregate_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    aggregate_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    status: Mapped[str] = mapped_column(
+        String(50), nullable=False, default=OutboxStatus.PENDING.value
+    )
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    available_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    locked_by: Mapped[str | None] = mapped_column(String(200))
+    locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    idempotency_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    correlation_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    trace_id: Mapped[str | None] = mapped_column(String(64))
+    error_code: Mapped[str | None] = mapped_column(String(100))
+    error_message: Mapped[str | None] = mapped_column(String(2000))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+
+class OperationalAlertModel(Base):
+    __tablename__ = "operational_alerts"
+    __table_args__ = (
+        CheckConstraint(
+            "occurrence_count > 0", name="ck_operational_alerts_occurrence_positive"
+        ),
+        UniqueConstraint("deduplication_key", name="uq_operational_alerts_dedup"),
+        Index("ix_operational_alerts_status_seen", "status", "last_seen_at"),
+        Index("ix_operational_alerts_type_seen", "alert_type", "last_seen_at"),
+        Index("ix_operational_alerts_resource", "resource_type", "resource_id"),
+    )
+
+    alert_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    alert_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(50), nullable=False, default=AlertStatus.OPEN.value
+    )
+    severity: Mapped[str] = mapped_column(String(50), nullable=False)
+    resource_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    resource_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    deduplication_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    summary: Mapped[str] = mapped_column(String(1000), nullable=False)
+    details: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    acknowledged_by: Mapped[str | None] = mapped_column(String(200))
+    acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    resolved_by: Mapped[str | None] = mapped_column(String(200))
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    occurrence_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    correlation_id: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class EvaluationDatasetModel(Base):
+    __tablename__ = "evaluation_datasets"
+    __table_args__ = (
+        UniqueConstraint("name", "version", name="uq_evaluation_datasets_name_version"),
+        Index("ix_evaluation_datasets_created", "created_at", "dataset_id"),
+    )
+
+    dataset_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    version: Mapped[str] = mapped_column(String(100), nullable=False)
+    description: Mapped[str | None] = mapped_column(String(1000))
+    created_by: Mapped[str] = mapped_column(String(200), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+    cases: Mapped[list[EvaluationCaseModel]] = relationship(
+        back_populates="dataset", cascade="all, delete-orphan"
+    )
+    runs: Mapped[list[EvaluationRunModel]] = relationship(back_populates="dataset")
+
+
+class EvaluationCaseModel(Base):
+    __tablename__ = "evaluation_cases"
+    __table_args__ = (
+        UniqueConstraint("dataset_id", "name", name="uq_evaluation_cases_dataset_name"),
+        CheckConstraint(
+            "case_order >= 0", name="ck_evaluation_cases_order_nonnegative"
+        ),
+        Index("ix_evaluation_cases_dataset_order", "dataset_id", "case_order"),
+    )
+
+    evaluation_case_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    dataset_id: Mapped[UUID] = mapped_column(
+        ForeignKey("evaluation_datasets.dataset_id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    case_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    campaign_input: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    actual_output: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    expected: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    thresholds: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+    dataset: Mapped[EvaluationDatasetModel] = relationship(back_populates="cases")
+    results: Mapped[list[EvaluationResultModel]] = relationship(back_populates="case")
+
+
+class EvaluationRunModel(Base):
+    __tablename__ = "evaluation_runs"
+    __table_args__ = (
+        CheckConstraint(
+            "total_cases >= 0", name="ck_evaluation_runs_total_nonnegative"
+        ),
+        CheckConstraint(
+            "completed_cases >= 0", name="ck_evaluation_runs_completed_nonnegative"
+        ),
+        Index("ix_evaluation_runs_status_created", "status", "created_at"),
+        Index("ix_evaluation_runs_dataset_created", "dataset_id", "created_at"),
+    )
+
+    evaluation_run_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    dataset_id: Mapped[UUID] = mapped_column(
+        ForeignKey("evaluation_datasets.dataset_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    status: Mapped[str] = mapped_column(
+        String(50), nullable=False, default=EvaluationRunStatus.PENDING.value
+    )
+    dataset_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    model_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    model_configuration_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    tool_registry_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    policy_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    application_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    total_cases: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    completed_cases: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    metrics: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    regression_passed: Mapped[bool | None] = mapped_column(Boolean)
+    created_by: Mapped[str] = mapped_column(String(200), nullable=False)
+    correlation_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_code: Mapped[str | None] = mapped_column(String(100))
+    error_message: Mapped[str | None] = mapped_column(String(2000))
+
+    dataset: Mapped[EvaluationDatasetModel] = relationship(back_populates="runs")
+    results: Mapped[list[EvaluationResultModel]] = relationship(
+        back_populates="run", cascade="all, delete-orphan"
+    )
+
+
+class EvaluationResultModel(Base):
+    __tablename__ = "evaluation_results"
+    __table_args__ = (
+        UniqueConstraint(
+            "evaluation_run_id",
+            "evaluation_case_id",
+            name="uq_evaluation_results_run_case",
+        ),
+        CheckConstraint(
+            "duration_ms >= 0", name="ck_evaluation_results_duration_nonnegative"
+        ),
+        CheckConstraint(
+            "input_tokens >= 0", name="ck_evaluation_results_input_tokens_nonnegative"
+        ),
+        CheckConstraint(
+            "output_tokens >= 0", name="ck_evaluation_results_output_tokens_nonnegative"
+        ),
+        CheckConstraint(
+            "estimated_cost >= 0", name="ck_evaluation_results_cost_nonnegative"
+        ),
+        Index("ix_evaluation_results_run_status", "evaluation_run_id", "status"),
+    )
+
+    evaluation_result_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    evaluation_run_id: Mapped[UUID] = mapped_column(
+        ForeignKey("evaluation_runs.evaluation_run_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    evaluation_case_id: Mapped[UUID] = mapped_column(
+        ForeignKey("evaluation_cases.evaluation_case_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    status: Mapped[str] = mapped_column(
+        String(50), nullable=False, default=EvaluationResultStatus.ERROR.value
+    )
+    assertions: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )
+    metrics: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    output_summary: Mapped[str | None] = mapped_column(String(1000))
+    duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    estimated_cost: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    error_code: Mapped[str | None] = mapped_column(String(100))
+    error_message: Mapped[str | None] = mapped_column(String(2000))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+    run: Mapped[EvaluationRunModel] = relationship(back_populates="results")
+    case: Mapped[EvaluationCaseModel] = relationship(back_populates="results")
 
 
 class SecurityEventModel(Base):
