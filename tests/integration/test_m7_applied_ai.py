@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import os
@@ -19,7 +20,12 @@ from app.core.constants import (
     PromptVersionStatus,
     UserRole,
 )
-from app.database.models import AgentRunModel, EvaluationDatasetModel
+from app.core.exceptions import M7ConflictError
+from app.database.models import (
+    AgentRunModel,
+    EvaluationDatasetModel,
+    PromptVersionModel,
+)
 from app.database.session import AsyncSessionLocal
 from app.integrations.n8n.service import N8NService
 from app.integrations.n8n.signatures import sign_webhook
@@ -33,7 +39,11 @@ from app.schemas.business_impact import (
     TaskImpactCreate,
     UserFeedbackCreate,
 )
-from app.schemas.media import ImageGenerationRequest, MediaReviewRequest
+from app.schemas.media import (
+    ImageGenerationRequest,
+    MediaReviewRequest,
+    VideoStoryboardRequest,
+)
 from app.schemas.campaign import CampaignCreate
 from app.schemas.prompt import (
     PromptExperimentCreate,
@@ -42,8 +52,10 @@ from app.schemas.prompt import (
     PromptVersionCreate,
 )
 from app.service.auth_service import AuthenticatedActor
+from app.service.applied_workflow_service import AppliedWorkflowService
 from app.service.campaign_service import CampaignService
 from app.service.data_analysis_service import DataAnalysisService
+from app.service.document_processing_service import DocumentProcessingService
 from app.service.workflow_service import WorkflowService
 
 pytestmark = [
@@ -121,6 +133,7 @@ async def test_prompt_lifecycle_rollback_and_experiment_are_persisted() -> None:
         first = await service.activate(
             first.prompt_version_id,
             expected_status=PromptVersionStatus.APPROVED,
+            expected_template_version=template.version,
             actor=manager(),
         )
         rendered = await service.resolve(
@@ -152,10 +165,18 @@ async def test_prompt_lifecycle_rollback_and_experiment_are_persisted() -> None:
         await service.activate(
             second.prompt_version_id,
             expected_status=PromptVersionStatus.APPROVED,
+            expected_template_version=(
+                await service.get_template(template.prompt_template_id)
+            ).version,
             actor=manager(),
         )
         rolled_back = await service.rollback(
-            template.prompt_template_id, first.prompt_version_id, actor=manager()
+            template.prompt_template_id,
+            first.prompt_version_id,
+            expected_template_version=(
+                await service.get_template(template.prompt_template_id)
+            ).version,
+            actor=manager(),
         )
         assert rolled_back.status == PromptVersionStatus.ACTIVE
         assert (
@@ -448,3 +469,179 @@ async def test_data_and_image_jobs_complete_with_mock_providers(tmp_path) -> Non
         assert approved.status == MediaAssetStatus.APPROVED
         run_rows = (await session.execute(select(AgentRunModel))).scalars().all()
         assert run_rows == []
+
+
+@pytest.mark.asyncio
+async def test_document_and_storyboard_jobs_persist_structured_results(
+    tmp_path,
+) -> None:
+    settings = get_settings().model_copy(update={"media_storage_root": str(tmp_path)})
+    async with AsyncSessionLocal() as session:
+        document = await DocumentProcessingService(session, settings=settings).request(
+            b"Marketing Brief\nObjective: Launch.\nOwner: Minh.\nAction: Review copy.",
+            "brief.txt",
+            "text/plain",
+            actor_id="m7-user",
+        )
+        storyboard = await MediaService(session, settings=settings).request_storyboard(
+            VideoStoryboardRequest(
+                campaign_brief="Cyber Legends launch for core players",
+                objective="Drive pre-registration",
+                target_duration_seconds=30,
+                aspect_ratio="16:9",
+            ),
+            actor=manager(),
+        )
+    worker = JobWorker(
+        "m7-document-storyboard-worker",
+        build_job_handlers(
+            AsyncSessionLocal,
+            settings=settings,
+            llm_client_factory=MockLLMClient,
+        ),
+        settings=settings,
+    )
+    assert await worker.run_once() == 2
+    async with AsyncSessionLocal() as session:
+        document_task = await AppliedWorkflowService(session).get(document.task_run_id)
+        assert document_task.status == "COMPLETED"
+        assert document_task.result is not None
+        assert document_task.result["document_type"] == "MARKETING_BRIEF"
+        storyboard_asset = await MediaService(session, settings=settings).get(
+            storyboard.media_asset_id
+        )
+        assert storyboard_asset.status == MediaAssetStatus.READY_FOR_REVIEW
+        assert storyboard_asset.task_run_id is not None
+        storyboard_task = await AppliedWorkflowService(session).get(
+            storyboard_asset.task_run_id
+        )
+        assert storyboard_task.result is not None
+        assert storyboard_task.result["scenes"]
+
+
+@pytest.mark.asyncio
+async def test_prompt_activation_and_media_review_have_one_concurrent_winner(
+    tmp_path,
+) -> None:
+    async with AsyncSessionLocal() as session:
+        prompts = PromptService(session)
+        template = await prompts.create_template(
+            PromptTemplateCreate(
+                name="Concurrent prompt",
+                slug="concurrent-prompt",
+                task_type="concurrency_test",
+                description="Concurrency fixture.",
+                input_schema={"type": "object"},
+                output_schema={"type": "object"},
+            ),
+            actor=manager(),
+        )
+        version_ids = []
+        for suffix in ("A", "B"):
+            version = await prompts.create_version(
+                template.prompt_template_id,
+                PromptVersionCreate(
+                    system_prompt=f"Safe fixture {suffix}.",
+                    user_prompt_template="Context: {context}",
+                    variables={"context": {}},
+                    change_summary=f"Candidate {suffix}",
+                ),
+                actor=manager(),
+            )
+            await prompts.transition(
+                version.prompt_version_id,
+                PromptVersionStatus.TESTING,
+                expected_status=PromptVersionStatus.DRAFT,
+                actor=manager(),
+            )
+            await prompts.transition(
+                version.prompt_version_id,
+                PromptVersionStatus.APPROVED,
+                expected_status=PromptVersionStatus.TESTING,
+                actor=manager(),
+            )
+            version_ids.append(version.prompt_version_id)
+
+    async def activate(version_id):
+        async with AsyncSessionLocal() as session:
+            try:
+                return await PromptService(session).activate(
+                    version_id,
+                    expected_status=PromptVersionStatus.APPROVED,
+                    expected_template_version=template.version,
+                    actor=manager(),
+                )
+            except M7ConflictError as exc:
+                return exc
+
+    activation_results = await asyncio.gather(*(activate(item) for item in version_ids))
+    assert sum(isinstance(item, M7ConflictError) for item in activation_results) == 1
+    async with AsyncSessionLocal() as session:
+        active = (
+            (
+                await session.execute(
+                    select(PromptVersionModel).where(
+                        PromptVersionModel.prompt_template_id
+                        == template.prompt_template_id,
+                        PromptVersionModel.status == PromptVersionStatus.ACTIVE.value,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(active) == 1
+
+    settings = get_settings().model_copy(update={"media_storage_root": str(tmp_path)})
+    async with AsyncSessionLocal() as session:
+        asset = await MediaService(session, settings=settings).request_image(
+            ImageGenerationRequest(prompt="Safe concurrent review fixture"),
+            actor=manager(),
+        )
+    worker = JobWorker(
+        "m7-review-concurrency-worker",
+        build_job_handlers(
+            AsyncSessionLocal,
+            settings=settings,
+            llm_client_factory=MockLLMClient,
+        ),
+        settings=settings,
+    )
+    assert await worker.run_once() == 1
+
+    async def review(decision: str):
+        async with AsyncSessionLocal() as session:
+            try:
+                return await MediaService(session, settings=settings).review(
+                    asset.media_asset_id,
+                    MediaReviewRequest(
+                        decision=decision,
+                        comment="Concurrent decision",
+                    ),
+                    actor=manager(),
+                )
+            except M7ConflictError as exc:
+                return exc
+
+    review_results = await asyncio.gather(review("APPROVE"), review("REJECT"))
+    assert sum(isinstance(item, M7ConflictError) for item in review_results) == 1
+
+    async def request_idempotent_image():
+        async with AsyncSessionLocal() as session:
+            return await MediaService(session, settings=settings).request_image(
+                ImageGenerationRequest(prompt="One idempotent image"),
+                actor=manager(),
+                idempotency_key="m7-concurrent-image-001",
+            )
+
+    duplicate_images = await asyncio.gather(
+        request_idempotent_image(), request_idempotent_image()
+    )
+    assert duplicate_images[0].media_asset_id == duplicate_images[1].media_asset_id
+    assert duplicate_images[0].task_run_id == duplicate_images[1].task_run_id
+    assert duplicate_images[0].task_run_id is not None
+    async with AsyncSessionLocal() as session:
+        duplicate_task = await AppliedWorkflowService(session).get(
+            duplicate_images[0].task_run_id
+        )
+        assert duplicate_task.job_id is not None

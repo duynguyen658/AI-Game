@@ -64,10 +64,15 @@ class ExpectedVersionRequest(BaseModel):
     expected_status: PromptVersionStatus
 
 
+class PromptActivationRequest(ExpectedVersionRequest):
+    expected_template_version: int = Field(ge=1)
+
+
 class PromptRollbackRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     prompt_version_id: UUID
+    expected_template_version: int = Field(ge=1)
 
 
 class PromptExperimentCreate(BaseModel):

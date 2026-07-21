@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Header, status
 
 from app.api.dependencies import SessionDependency, get_current_actor
 from app.media.service import MediaService
@@ -26,8 +26,13 @@ async def create_image(
     data: ImageGenerationRequest,
     session: SessionDependency,
     actor: Annotated[AuthenticatedActor, Depends(get_current_actor)],
+    idempotency_key: Annotated[
+        str | None, Header(alias="X-Idempotency-Key", max_length=200)
+    ] = None,
 ) -> MediaAssetRead:
-    return await MediaService(session).request_image(data, actor=actor)
+    return await MediaService(session).request_image(
+        data, actor=actor, idempotency_key=idempotency_key
+    )
 
 
 @router.get("/assets/{asset_id}", response_model=MediaAssetRead)

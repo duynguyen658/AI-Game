@@ -1376,6 +1376,11 @@ class AppliedWorkflowTaskModel(Base):
 class MediaAssetModel(Base):
     __tablename__ = "media_assets"
     __table_args__ = (
+        UniqueConstraint(
+            "created_by",
+            "idempotency_key",
+            name="uq_media_assets_actor_idempotency",
+        ),
         Index("ix_media_assets_status_created", "status", "created_at"),
         Index("ix_media_assets_campaign", "campaign_id"),
     )
@@ -1411,6 +1416,7 @@ class MediaAssetModel(Base):
     estimated_cost: Mapped[Decimal | None] = mapped_column(Numeric(14, 6))
     safety_status: Mapped[str] = mapped_column(String(50), nullable=False)
     created_by: Mapped[str] = mapped_column(String(200), nullable=False)
+    idempotency_key: Mapped[str | None] = mapped_column(String(200))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now
     )

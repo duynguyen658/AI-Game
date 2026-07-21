@@ -115,7 +115,13 @@ class BusinessImpactService:
             },
             idempotency_key=f"feedback:{model.user_feedback_id}:v{model.version}",
         )
-        await self.session.commit()
+        try:
+            await self.session.commit()
+        except IntegrityError as exc:
+            await self.session.rollback()
+            raise M7ConflictError(
+                "Feedback changed or already exists; refresh and retry"
+            ) from exc
         return UserFeedbackRead.model_validate(model, from_attributes=True)
 
     async def analytics(

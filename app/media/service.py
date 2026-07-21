@@ -5,6 +5,7 @@ from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.exc import IntegrityError
 
 from app.core.config import Settings, get_settings
 from app.core.constants import (
@@ -61,8 +62,19 @@ class MediaService:
         self.tasks = AppliedWorkflowRepository(session)
 
     async def request_image(
-        self, data: ImageGenerationRequest, *, actor: AuthenticatedActor
+        self,
+        data: ImageGenerationRequest,
+        *,
+        actor: AuthenticatedActor,
+        idempotency_key: str | None = None,
     ) -> MediaAssetRead:
+        if idempotency_key:
+            idempotency_key = sanitize_text(idempotency_key, max_characters=200)
+            existing = await self.media.get_asset_by_idempotency(
+                actor.actor_id, idempotency_key
+            )
+            if existing is not None:
+                return media_to_schema(existing)
         task = AppliedWorkflowTaskModel(
             workflow_type=AppliedWorkflowType.IMAGE_GENERATION.value,
             status=AppliedTaskStatus.PENDING.value,
@@ -91,17 +103,30 @@ class MediaService:
             height=data.height,
             safety_status="PENDING",
             created_by=actor.actor_id,
+            idempotency_key=idempotency_key,
         )
-        await self.media.create_asset(asset)
-        job = await JobQueue(self.session, settings=self.settings).enqueue(
-            JobType.IMAGE_GENERATION,
-            ImageGenerationJobPayload(media_asset_id=asset.media_asset_id),
-            created_by=actor.actor_id,
-            idempotency_key=f"image-generation:{asset.media_asset_id}",
-            commit=False,
-        )
-        task.job_id = job.job_id
-        await self.session.commit()
+        try:
+            await self.media.create_asset(asset)
+            job = await JobQueue(self.session, settings=self.settings).enqueue(
+                JobType.IMAGE_GENERATION,
+                ImageGenerationJobPayload(media_asset_id=asset.media_asset_id),
+                created_by=actor.actor_id,
+                idempotency_key=f"image-generation:{actor.actor_id}:{idempotency_key}"
+                if idempotency_key
+                else f"image-generation:{asset.media_asset_id}",
+                commit=False,
+            )
+            task.job_id = job.job_id
+            await self.session.commit()
+        except IntegrityError as exc:
+            await self.session.rollback()
+            if idempotency_key:
+                existing = await self.media.get_asset_by_idempotency(
+                    actor.actor_id, idempotency_key
+                )
+                if existing is not None:
+                    return media_to_schema(existing)
+            raise M7ConflictError("Image request already exists") from exc
         return media_to_schema(asset)
 
     async def request_storyboard(
@@ -153,7 +178,9 @@ class MediaService:
     ) -> MediaAssetRead:
         if actor.role not in {UserRole.REVIEWER, UserRole.MANAGER, UserRole.ADMIN}:
             raise M7ConflictError("Reviewer role is required")
-        asset = await self._asset(asset_id)
+        asset = await self.media.get_asset_for_update(asset_id)
+        if asset is None:
+            raise M7ResourceNotFoundError("Media asset not found")
         if asset.status != MediaAssetStatus.READY_FOR_REVIEW.value:
             raise M7ConflictError("Media asset is not ready for review")
         now = datetime.now(UTC)

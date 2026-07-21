@@ -146,6 +146,7 @@ async def seed() -> None:
             await prompts.activate(
                 version.prompt_version_id,
                 expected_status=PromptVersionStatus.APPROVED,
+                expected_template_version=template.version,
                 actor=actor,
             )
 

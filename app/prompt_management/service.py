@@ -167,12 +167,16 @@ class PromptService:
         version_id: UUID,
         *,
         expected_status: PromptVersionStatus,
+        expected_template_version: int,
         actor: AuthenticatedActor,
     ) -> PromptVersionRead:
         self._require_manager(actor)
         model = await self._version(version_id)
-        if await self.prompts.get_template_for_update(model.prompt_template_id) is None:
+        template = await self.prompts.get_template_for_update(model.prompt_template_id)
+        if template is None:
             raise M7ResourceNotFoundError("Prompt template not found")
+        if template.version != expected_template_version:
+            raise M7ConflictError("Prompt template changed; refresh and retry")
         current = PromptVersionStatus(model.status)
         if current != expected_status or current not in {
             PromptVersionStatus.APPROVED,
@@ -190,6 +194,7 @@ class PromptService:
         model.status = PromptVersionStatus.ACTIVE.value
         model.activated_at = now
         model.retired_at = None
+        template.version += 1
         await OutboxService(self.session).add_event(
             event_type=OutboxEventType.PROMPT_VERSION_ACTIVATED,
             aggregate_type="prompt_version",
@@ -205,7 +210,12 @@ class PromptService:
         return version_to_schema(model)
 
     async def rollback(
-        self, template_id: UUID, version_id: UUID, *, actor: AuthenticatedActor
+        self,
+        template_id: UUID,
+        version_id: UUID,
+        *,
+        expected_template_version: int,
+        actor: AuthenticatedActor,
     ) -> PromptVersionRead:
         model = await self._version(version_id)
         if model.prompt_template_id != template_id:
@@ -213,6 +223,7 @@ class PromptService:
         return await self.activate(
             version_id,
             expected_status=PromptVersionStatus(model.status),
+            expected_template_version=expected_template_version,
             actor=actor,
         )
 

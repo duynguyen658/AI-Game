@@ -182,6 +182,7 @@ def _classify(text: str) -> tuple[DocumentType, float]:
     lower = text.lower()
     signals = {
         DocumentType.MARKETING_BRIEF: (
+            "marketing brief",
             "target audience",
             "campaign objective",
             "key message",

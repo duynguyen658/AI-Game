@@ -9,6 +9,7 @@ from app.operations.rate_limit import enforce_sensitive_rate_limit
 from app.prompt_management.service import PromptService
 from app.schemas.prompt import (
     ExpectedVersionRequest,
+    PromptActivationRequest,
     PromptRollbackRequest,
     PromptTemplateCreate,
     PromptTemplateRead,
@@ -117,12 +118,15 @@ async def approve_prompt_version(
 @router.post("/prompt-versions/{version_id}/activate", response_model=PromptVersionRead)
 async def activate_prompt_version(
     version_id: UUID,
-    data: ExpectedVersionRequest,
+    data: PromptActivationRequest,
     session: SessionDependency,
     actor: Annotated[AuthenticatedActor, Depends(get_current_actor)],
 ) -> PromptVersionRead:
     return await PromptService(session).activate(
-        version_id, expected_status=data.expected_status, actor=actor
+        version_id,
+        expected_status=data.expected_status,
+        expected_template_version=data.expected_template_version,
+        actor=actor,
     )
 
 
@@ -148,5 +152,8 @@ async def rollback_prompt_template(
     actor: Annotated[AuthenticatedActor, Depends(get_current_actor)],
 ) -> PromptVersionRead:
     return await PromptService(session).rollback(
-        template_id, data.prompt_version_id, actor=actor
+        template_id,
+        data.prompt_version_id,
+        expected_template_version=data.expected_template_version,
+        actor=actor,
     )
