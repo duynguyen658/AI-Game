@@ -27,9 +27,14 @@ class Settings(BaseSettings):
     database_max_overflow: int = Field(default=20, ge=0)
     database_pool_timeout_seconds: int = Field(default=30, ge=1)
 
-    llm_provider: Literal["openai", "mock"] = "mock"
+    llm_provider: Literal["openai", "mock", "gemini", "anthropic"] = "mock"
     llm_api_key: SecretStr | None = None
     llm_model: str = ""
+    openai_api_key: SecretStr | None = None
+    gemini_api_key: SecretStr | None = None
+    anthropic_api_key: SecretStr | None = None
+    llm_fallback_providers: str = ""
+    llm_max_estimated_cost: float = Field(default=5.0, ge=0)
     llm_timeout_seconds: int = Field(default=60, ge=1, le=300)
     llm_max_retries: int = Field(default=2, ge=0, le=5)
 
@@ -38,6 +43,17 @@ class Settings(BaseSettings):
     jwt_access_token_expire_minutes: int = 60
 
     n8n_webhook_secret: SecretStr = SecretStr("change-me")
+    n8n_timestamp_tolerance_seconds: int = Field(default=300, ge=30, le=3600)
+    n8n_max_body_bytes: int = Field(default=1_048_576, ge=1024, le=10_485_760)
+    image_provider: Literal["mock", "openai"] = "mock"
+    image_model: str = "gpt-image-1"
+    media_storage_root: str = "var/media"
+    media_max_cost: float = Field(default=5.0, ge=0)
+    max_upload_bytes: int = Field(default=5_242_880, ge=1024, le=52_428_800)
+    max_csv_rows: int = Field(default=50_000, ge=1, le=1_000_000)
+    max_csv_columns: int = Field(default=100, ge=1, le=1000)
+    max_document_pages: int = Field(default=200, ge=1, le=2000)
+    enable_real_video_generation: bool = False
     approval_token_secret: SecretStr = SecretStr("change-me")
     metrics_token: SecretStr = SecretStr("change-me")
 
@@ -116,10 +132,17 @@ class Settings(BaseSettings):
                 "OUTBOX_RETRY_BASE_SECONDS must not exceed OUTBOX_RETRY_MAX_SECONDS"
             )
         if self.llm_provider == "openai":
-            if not self.llm_api_key or not self.llm_api_key.get_secret_value():
-                raise ValueError("LLM_API_KEY is required when LLM_PROVIDER=openai")
+            key = self.openai_api_key or self.llm_api_key
+            if not key or not key.get_secret_value():
+                raise ValueError("OPENAI_API_KEY is required when LLM_PROVIDER=openai")
             if not self.llm_model:
                 raise ValueError("LLM_MODEL is required when LLM_PROVIDER=openai")
+        if self.llm_provider == "gemini" and not self.gemini_api_key:
+            raise ValueError("GEMINI_API_KEY is required when LLM_PROVIDER=gemini")
+        if self.llm_provider == "anthropic" and not self.anthropic_api_key:
+            raise ValueError(
+                "ANTHROPIC_API_KEY is required when LLM_PROVIDER=anthropic"
+            )
 
         if self.app_env == "production":
             unsafe_values = {

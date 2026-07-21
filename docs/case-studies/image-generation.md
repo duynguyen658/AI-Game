@@ -1,0 +1,3 @@
+# Image Generation
+
+**Business problem:** Campaign art concepts were slow. **Manual process:** Briefs passed between marketing and design. **AI workflow:** A typed job invokes a provider, validates and stores output, then requests review. **Prompt/provider choice:** Managed creative prompt, Mock in CI, optional OpenAI adapter. **Validation:** MIME signature, dimensions, output, provider flags, URI, latency, and cost. **Failure cases:** Corrupt or flagged output fails closed. **Human review:** Required before approval; publishing is absent. **Before/after metrics:** Duration, editing, acceptance, and cost. **Lesson learned:** Review state and immutable attempts make media auditable.

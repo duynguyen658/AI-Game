@@ -16,6 +16,13 @@ from app.core.exceptions import (
     LLMTimeoutError,
 )
 from app.llm.agent_turn import AgentMessage, AgentToolRequest, AgentTurn, LLMUsage
+from app.core.constants import ProviderName
+from app.llm.capabilities import (
+    CompletionRequest,
+    NormalizedCompletion,
+    NormalizedToolCall,
+    NormalizedUsage,
+)
 from app.observability.metrics import (
     LLM_DURATION,
     LLM_FAILURES,
@@ -30,15 +37,113 @@ OutputT = TypeVar("OutputT", bound=BaseModel)
 
 class OpenAILLMClient:
     def __init__(self, settings: Settings) -> None:
-        api_key = (
-            settings.llm_api_key.get_secret_value() if settings.llm_api_key else None
-        )
+        configured_key = settings.openai_api_key or settings.llm_api_key
+        api_key = configured_key.get_secret_value() if configured_key else None
         self.client = AsyncOpenAI(
             api_key=api_key,
             timeout=settings.llm_timeout_seconds,
             max_retries=settings.llm_max_retries,
         )
         self.model = settings.llm_model
+
+    async def complete(self, request: CompletionRequest) -> NormalizedCompletion:
+        try:
+            create_completion = cast(Any, self.client.chat.completions.create)
+            completion = await create_completion(
+                model=request.model,
+                messages=[
+                    {"role": "system", "content": request.system_prompt},
+                    {"role": "user", "content": request.user_prompt},
+                ],
+                temperature=request.temperature,
+                max_tokens=request.max_output_tokens,
+            )
+        except APITimeoutError as exc:
+            raise LLMTimeoutError("LLM provider timed out") from exc
+        except APIConnectionError as exc:
+            raise LLMProviderUnavailableError(
+                "LLM provider is temporarily unavailable"
+            ) from exc
+        except APIStatusError as exc:
+            raise _provider_status_error(exc) from exc
+        message = completion.choices[0].message
+        usage = completion.usage
+        return NormalizedCompletion(
+            provider=ProviderName.OPENAI,
+            model=request.model,
+            content=message.content,
+            usage=NormalizedUsage(
+                input_tokens=int(getattr(usage, "prompt_tokens", 0) or 0),
+                output_tokens=int(getattr(usage, "completion_tokens", 0) or 0),
+            ),
+            finish_reason=completion.choices[0].finish_reason,
+        )
+
+    async def complete_structured(
+        self, request: CompletionRequest, output_schema: type[OutputT]
+    ) -> NormalizedCompletion:
+        output = await self.generate_structured(
+            system_prompt=request.system_prompt,
+            user_prompt=request.user_prompt,
+            output_schema=output_schema,
+        )
+        return NormalizedCompletion(
+            provider=ProviderName.OPENAI,
+            model=request.model,
+            structured=output.model_dump(mode="json"),
+            finish_reason="stop",
+        )
+
+    async def complete_with_tools(
+        self, request: CompletionRequest
+    ) -> NormalizedCompletion:
+        try:
+            create_completion = cast(Any, self.client.chat.completions.create)
+            completion = await create_completion(
+                model=request.model,
+                messages=[
+                    {"role": "system", "content": request.system_prompt},
+                    {"role": "user", "content": request.user_prompt},
+                ],
+                tools=[
+                    {"type": "function", "function": tool} for tool in request.tools
+                ],
+                temperature=request.temperature,
+                max_tokens=request.max_output_tokens,
+            )
+        except APITimeoutError as exc:
+            raise LLMTimeoutError("LLM provider timed out") from exc
+        except APIConnectionError as exc:
+            raise LLMProviderUnavailableError(
+                "LLM provider is temporarily unavailable"
+            ) from exc
+        except APIStatusError as exc:
+            raise _provider_status_error(exc) from exc
+        message = completion.choices[0].message
+        calls = []
+        for raw_call in message.tool_calls or []:
+            call = cast(Any, raw_call)
+            try:
+                arguments = json.loads(call.function.arguments)
+            except json.JSONDecodeError as exc:
+                raise LLMResponseError("LLM returned malformed tool arguments") from exc
+            calls.append(
+                NormalizedToolCall(
+                    call_id=call.id, name=call.function.name, arguments=arguments
+                )
+            )
+        usage = completion.usage
+        return NormalizedCompletion(
+            provider=ProviderName.OPENAI,
+            model=request.model,
+            content=message.content,
+            tool_calls=calls,
+            usage=NormalizedUsage(
+                input_tokens=int(getattr(usage, "prompt_tokens", 0) or 0),
+                output_tokens=int(getattr(usage, "completion_tokens", 0) or 0),
+            ),
+            finish_reason=completion.choices[0].finish_reason,
+        )
 
     async def generate_structured(
         self,

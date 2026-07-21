@@ -90,6 +90,38 @@ class PersistenceError(ApplicationError):
     error_code = "PERSISTENCE_ERROR"
 
 
+class UnknownConstraintPersistenceError(PersistenceError):
+    error_code = "UNKNOWN_CONSTRAINT_PERSISTENCE_ERROR"
+
+
+class MediaPersistenceError(PersistenceError):
+    error_code = "MEDIA_PERSISTENCE_ERROR"
+
+
+class BusinessImpactPersistenceError(PersistenceError):
+    error_code = "BUSINESS_IMPACT_PERSISTENCE_ERROR"
+
+
+class FeedbackPersistenceError(PersistenceError):
+    error_code = "FEEDBACK_PERSISTENCE_ERROR"
+
+
+class MediaAttemptFinalizationError(PersistenceError):
+    error_code = "MEDIA_ATTEMPT_FINALIZATION_ERROR"
+
+
+class MediaAttemptReconciliationError(PersistenceError):
+    error_code = "MEDIA_ATTEMPT_RECONCILIATION_ERROR"
+
+
+class MediaAttemptStateConflictError(ApplicationError):
+    error_code = "MEDIA_ATTEMPT_STATE_CONFLICT"
+
+
+class MediaAttemptLeaseLostError(ApplicationError):
+    error_code = "MEDIA_ATTEMPT_LEASE_LOST"
+
+
 class AgentRunNotFoundError(ApplicationError):
     error_code = "AGENT_RUN_NOT_FOUND"
 
@@ -288,3 +320,23 @@ class RateLimitExceededError(ApplicationError):
 
 class RequestBodyTooLargeError(ApplicationError):
     error_code = "REQUEST_BODY_TOO_LARGE"
+
+
+class M7ResourceNotFoundError(ApplicationError):
+    error_code = "M7_RESOURCE_NOT_FOUND"
+
+
+class M7ConflictError(ApplicationError):
+    error_code = "M7_CONFLICT"
+
+
+class M7ValidationError(ApplicationError):
+    error_code = "M7_VALIDATION_ERROR"
+
+
+class ProviderCapabilityError(M7ValidationError):
+    error_code = "PROVIDER_CAPABILITY_UNAVAILABLE"
+
+
+class WebhookAuthenticationError(AuthenticationError):
+    error_code = "WEBHOOK_AUTHENTICATION_FAILED"

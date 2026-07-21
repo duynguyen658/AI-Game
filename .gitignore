@@ -29,6 +29,7 @@ htmlcov/
 *.log
 logs/
 data/private/
+var/media/
 build/
 dist/
 *.egg-info/

@@ -7,6 +7,8 @@ from fastapi import APIRouter, Depends, Query
 
 from app.api.dependencies import SessionDependency, get_current_actor
 from app.core.constants import JobStatus, JobType
+from app.jobs.definitions import LeasedJob
+from app.jobs.lifecycle import JobTerminalReconciler
 from app.jobs.queue import JobQueue
 from app.operations.audit import record_operator_action
 from app.operations.rate_limit import enforce_sensitive_rate_limit
@@ -53,6 +55,7 @@ async def retry_job(
 ) -> JobRead:
     AuthService().require_operator(actor)
     job = await JobQueue(session).retry(job_id)
+    await JobTerminalReconciler(session).prepare_retry(_leased_view(job))
     await record_operator_action(
         session,
         actor=actor,
@@ -75,6 +78,13 @@ async def cancel_job(
 ) -> JobRead:
     AuthService().require_operator(actor)
     job = await JobQueue(session).cancel(job_id)
+    if job.status == JobStatus.CANCELLED:
+        await JobTerminalReconciler(session).reconcile(
+            _leased_view(job),
+            cancelled=True,
+            error_code="JOB_CANCELLED",
+            error_message="Background job was cancelled",
+        )
     await record_operator_action(
         session,
         actor=actor,
@@ -83,3 +93,15 @@ async def cancel_job(
         resource_id=str(job_id),
     )
     return job
+
+
+def _leased_view(job: JobRead) -> LeasedJob:
+    return LeasedJob(
+        job_id=job.job_id,
+        job_type=job.job_type,
+        payload=job.payload,
+        attempt_count=max(job.attempt_count, 1),
+        max_attempts=max(job.max_attempts, 1),
+        correlation_id=job.correlation_id,
+        trace_id=job.trace_id,
+    )

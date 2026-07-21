@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -13,6 +14,8 @@ from sqlalchemy import (
     Float,
     Index,
     Integer,
+    LargeBinary,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -261,6 +264,19 @@ class AgentRunModel(Base):
     )
     model: Mapped[str | None] = mapped_column(String(200))
     prompt_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    prompt_template_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("prompt_templates.prompt_template_id", ondelete="SET NULL")
+    )
+    prompt_version_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("prompt_versions.prompt_version_id", ondelete="SET NULL")
+    )
+    prompt_version_number: Mapped[int | None] = mapped_column(Integer)
+    prompt_content_hash: Mapped[str | None] = mapped_column(String(64))
+    provider: Mapped[str | None] = mapped_column(String(50))
+    model_configuration_hash: Mapped[str | None] = mapped_column(String(64))
+    tool_registry_version: Mapped[str | None] = mapped_column(String(50))
+    policy_version: Mapped[str | None] = mapped_column(String(50))
+    application_version: Mapped[str | None] = mapped_column(String(50))
     iteration_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     llm_call_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     tool_call_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -1047,4 +1063,639 @@ class SecurityEventModel(Base):
         DateTime(timezone=True),
         nullable=False,
         default=utc_now,
+    )
+
+
+class PromptTemplateModel(Base):
+    __tablename__ = "prompt_templates"
+    __table_args__ = (
+        UniqueConstraint("slug", name="uq_prompt_templates_slug"),
+        Index("ix_prompt_templates_task_status", "task_type", "status"),
+    )
+
+    prompt_template_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    slug: Mapped[str] = mapped_column(String(120), nullable=False)
+    agent_name: Mapped[str | None] = mapped_column(String(50))
+    task_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    description: Mapped[str] = mapped_column(String(1000), nullable=False)
+    input_schema: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    output_schema: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="ACTIVE")
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_by: Mapped[str] = mapped_column(String(200), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+
+class PromptVersionModel(Base):
+    __tablename__ = "prompt_versions"
+    __table_args__ = (
+        UniqueConstraint(
+            "prompt_template_id", "version", name="uq_prompt_versions_template_version"
+        ),
+        Index(
+            "uq_prompt_versions_one_active",
+            "prompt_template_id",
+            unique=True,
+            postgresql_where=text("status = 'ACTIVE'"),
+        ),
+        Index("ix_prompt_versions_template_status", "prompt_template_id", "status"),
+    )
+
+    prompt_version_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    prompt_template_id: Mapped[UUID] = mapped_column(
+        ForeignKey("prompt_templates.prompt_template_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="DRAFT")
+    system_prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    user_prompt_template: Mapped[str] = mapped_column(Text, nullable=False)
+    variables: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )
+    change_summary: Mapped[str] = mapped_column(String(1000), nullable=False)
+    model_requirements: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )
+    created_by: Mapped[str] = mapped_column(String(200), nullable=False)
+    approved_by: Mapped[str | None] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now
+    )
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class PromptExperimentModel(Base):
+    __tablename__ = "prompt_experiments"
+    __table_args__ = (
+        CheckConstraint(
+            "sample_size > 0", name="ck_prompt_experiments_sample_positive"
+        ),
+        Index("ix_prompt_experiments_template_status", "prompt_template_id", "status"),
+    )
+
+    experiment_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    prompt_template_id: Mapped[UUID] = mapped_column(
+        ForeignKey("prompt_templates.prompt_template_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    control_version_id: Mapped[UUID] = mapped_column(
+        ForeignKey("prompt_versions.prompt_version_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    candidate_version_id: Mapped[UUID] = mapped_column(
+        ForeignKey("prompt_versions.prompt_version_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    dataset_id: Mapped[UUID] = mapped_column(
+        ForeignKey("evaluation_datasets.dataset_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="DRAFT")
+    sample_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    provider: Mapped[str] = mapped_column(String(50), nullable=False, default="mock")
+    model: Mapped[str] = mapped_column(
+        String(200), nullable=False, default="mock-applied-ai"
+    )
+    execution_settings: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )
+    dataset_version: Mapped[str | None] = mapped_column(String(100))
+    model_configuration_hash: Mapped[str | None] = mapped_column(String(64))
+    tool_registry_version: Mapped[str | None] = mapped_column(String(100))
+    policy_version: Mapped[str | None] = mapped_column(String(100))
+    application_version: Mapped[str | None] = mapped_column(String(100))
+    job_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("background_jobs.job_id", ondelete="SET NULL")
+    )
+    created_by: Mapped[str] = mapped_column(String(200), nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_code: Mapped[str | None] = mapped_column(String(100))
+    error_message: Mapped[str | None] = mapped_column(String(2000))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now
+    )
+
+
+class PromptExperimentResultModel(Base):
+    __tablename__ = "prompt_experiment_results"
+    __table_args__ = (
+        UniqueConstraint(
+            "experiment_id", name="uq_prompt_experiment_results_experiment"
+        ),
+    )
+
+    experiment_result_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    experiment_id: Mapped[UUID] = mapped_column(
+        ForeignKey("prompt_experiments.experiment_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    evaluation_run_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("evaluation_runs.evaluation_run_id", ondelete="SET NULL")
+    )
+    control_metrics: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    candidate_metrics: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    winner: Mapped[str | None] = mapped_column(String(20))
+    decision_reason: Mapped[str] = mapped_column(String(1000), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now
+    )
+
+
+class PromptExperimentCaseResultModel(Base):
+    __tablename__ = "prompt_experiment_case_results"
+    __table_args__ = (
+        UniqueConstraint(
+            "experiment_id",
+            "evaluation_case_id",
+            "variant",
+            name="uq_prompt_experiment_case_variant",
+        ),
+        Index("ix_prompt_experiment_cases_status", "experiment_id", "status"),
+    )
+
+    case_result_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    experiment_id: Mapped[UUID] = mapped_column(
+        ForeignKey("prompt_experiments.experiment_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    evaluation_case_id: Mapped[UUID] = mapped_column(
+        ForeignKey("evaluation_cases.evaluation_case_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    prompt_version_id: Mapped[UUID] = mapped_column(
+        ForeignKey("prompt_versions.prompt_version_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    variant: Mapped[str] = mapped_column(String(20), nullable=False)
+    status: Mapped[str] = mapped_column(String(50), nullable=False)
+    output: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    metrics: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    error_code: Mapped[str | None] = mapped_column(String(100))
+    error_message: Mapped[str | None] = mapped_column(String(2000))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now
+    )
+
+
+class ProviderComparisonModel(Base):
+    __tablename__ = "provider_comparisons"
+    __table_args__ = (
+        Index("ix_provider_comparisons_status_created", "status", "created_at"),
+    )
+
+    comparison_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    prompt_version_id: Mapped[UUID] = mapped_column(
+        ForeignKey("prompt_versions.prompt_version_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    dataset_id: Mapped[UUID] = mapped_column(
+        ForeignKey("evaluation_datasets.dataset_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    dataset_version: Mapped[str | None] = mapped_column(String(100))
+    providers: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    models: Mapped[dict[str, str]] = mapped_column(JSONB, nullable=False)
+    sample_size: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+    execution_settings: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="DRAFT")
+    report: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    job_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("background_jobs.job_id", ondelete="SET NULL")
+    )
+    created_by: Mapped[str] = mapped_column(String(200), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_code: Mapped[str | None] = mapped_column(String(100))
+    error_message: Mapped[str | None] = mapped_column(String(2000))
+
+
+class ProviderComparisonCaseResultModel(Base):
+    __tablename__ = "provider_comparison_case_results"
+    __table_args__ = (
+        UniqueConstraint(
+            "comparison_id",
+            "evaluation_case_id",
+            "provider",
+            name="uq_provider_comparison_case_provider",
+        ),
+        Index("ix_provider_comparison_cases_status", "comparison_id", "status"),
+    )
+
+    case_result_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    comparison_id: Mapped[UUID] = mapped_column(
+        ForeignKey("provider_comparisons.comparison_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    evaluation_case_id: Mapped[UUID] = mapped_column(
+        ForeignKey("evaluation_cases.evaluation_case_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    provider: Mapped[str] = mapped_column(String(50), nullable=False)
+    model: Mapped[str] = mapped_column(String(200), nullable=False)
+    status: Mapped[str] = mapped_column(String(50), nullable=False)
+    output: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    metrics: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    error_code: Mapped[str | None] = mapped_column(String(100))
+    error_message: Mapped[str | None] = mapped_column(String(2000))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now
+    )
+
+
+class TaskBaselineModel(Base):
+    __tablename__ = "task_baselines"
+    __table_args__ = (
+        CheckConstraint(
+            "manual_duration_minutes >= 0", name="ck_task_baseline_duration"
+        ),
+        CheckConstraint("manual_steps >= 0", name="ck_task_baseline_steps"),
+        CheckConstraint(
+            "historical_error_rate >= 0 AND historical_error_rate <= 1",
+            name="ck_task_baseline_error_rate",
+        ),
+        CheckConstraint("baseline_cost >= 0", name="ck_task_baseline_cost"),
+        CheckConstraint("sample_size > 0", name="ck_task_baseline_sample"),
+        Index("ix_task_baselines_type_department", "task_type", "department"),
+    )
+
+    task_baseline_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    task_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    department: Mapped[str] = mapped_column(String(100), nullable=False)
+    manual_duration_minutes: Mapped[Decimal] = mapped_column(
+        Numeric(12, 2), nullable=False
+    )
+    manual_steps: Mapped[int] = mapped_column(Integer, nullable=False)
+    historical_error_rate: Mapped[Decimal] = mapped_column(
+        Numeric(8, 6), nullable=False
+    )
+    baseline_cost: Mapped[Decimal] = mapped_column(Numeric(14, 4), nullable=False)
+    sample_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    source: Mapped[str] = mapped_column(String(500), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_by: Mapped[str] = mapped_column(String(200), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+
+class AITaskImpactModel(Base):
+    __tablename__ = "ai_task_impacts"
+    __table_args__ = (
+        UniqueConstraint("task_run_id", name="uq_ai_task_impacts_task_run"),
+        CheckConstraint("minutes_saved >= 0", name="ck_ai_task_impact_minutes_saved"),
+        CheckConstraint(
+            "automation_rate >= 0 AND automation_rate <= 1",
+            name="ck_ai_task_impact_automation_rate",
+        ),
+        CheckConstraint(
+            "NOT accepted_without_editing OR "
+            "(output_accepted IS TRUE AND editing_minutes = 0 AND rework_count = 0)",
+            name="ck_ai_task_impact_first_pass_acceptance",
+        ),
+        Index("ix_ai_task_impacts_type_created", "task_type", "created_at"),
+        Index("ix_ai_task_impacts_provider_model", "provider", "model"),
+    )
+
+    ai_task_impact_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    task_run_id: Mapped[UUID] = mapped_column(
+        ForeignKey("applied_workflow_tasks.task_run_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    task_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    department: Mapped[str | None] = mapped_column(String(100))
+    workflow_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("workflow_runs.workflow_id", ondelete="SET NULL")
+    )
+    job_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("background_jobs.job_id", ondelete="SET NULL")
+    )
+    agent_run_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("agent_runs.agent_run_id", ondelete="SET NULL")
+    )
+    prompt_version_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("prompt_versions.prompt_version_id", ondelete="SET NULL")
+    )
+    provider: Mapped[str] = mapped_column(String(50), nullable=False)
+    model: Mapped[str] = mapped_column(String(200), nullable=False)
+    manual_duration_baseline: Mapped[Decimal] = mapped_column(
+        Numeric(12, 2), nullable=False
+    )
+    ai_duration_minutes: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    minutes_saved: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    steps_before: Mapped[int] = mapped_column(Integer, nullable=False)
+    steps_after: Mapped[int] = mapped_column(Integer, nullable=False)
+    automated_steps: Mapped[int] = mapped_column(Integer, nullable=False)
+    automation_rate: Mapped[Decimal] = mapped_column(Numeric(8, 6), nullable=False)
+    task_completed_successfully: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True
+    )
+    output_accepted: Mapped[bool | None] = mapped_column(Boolean)
+    accepted_without_editing: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    editing_minutes: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    rework_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    error_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    estimated_cost: Mapped[Decimal] = mapped_column(Numeric(14, 6), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now
+    )
+
+
+class UserFeedbackModel(Base):
+    __tablename__ = "user_feedback"
+    __table_args__ = (
+        UniqueConstraint("task_run_id", "actor_id", name="uq_user_feedback_task_actor"),
+        CheckConstraint("rating BETWEEN 1 AND 5", name="ck_user_feedback_rating"),
+        CheckConstraint("editing_minutes >= 0", name="ck_user_feedback_editing"),
+        CheckConstraint("rework_count >= 0", name="ck_user_feedback_rework"),
+        CheckConstraint(
+            "NOT accepted_without_editing OR "
+            "(output_accepted IS TRUE AND editing_minutes = 0 AND rework_count = 0)",
+            name="ck_user_feedback_first_pass_acceptance",
+        ),
+        Index("ix_user_feedback_type_created", "task_type", "created_at"),
+    )
+
+    user_feedback_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    task_run_id: Mapped[UUID] = mapped_column(
+        ForeignKey("applied_workflow_tasks.task_run_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    task_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    workflow_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("workflow_runs.workflow_id", ondelete="SET NULL")
+    )
+    agent_run_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("agent_runs.agent_run_id", ondelete="SET NULL")
+    )
+    prompt_version_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("prompt_versions.prompt_version_id", ondelete="SET NULL")
+    )
+    provider: Mapped[str] = mapped_column(String(50), nullable=False)
+    model: Mapped[str] = mapped_column(String(200), nullable=False)
+    actor_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    rating: Mapped[int] = mapped_column(Integer, nullable=False)
+    helpfulness: Mapped[int] = mapped_column(Integer, nullable=False)
+    accuracy: Mapped[int] = mapped_column(Integer, nullable=False)
+    ease_of_use: Mapped[int] = mapped_column(Integer, nullable=False)
+    output_accepted: Mapped[bool | None] = mapped_column(Boolean)
+    accepted_without_editing: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    editing_minutes: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    rework_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    would_use_again: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    comment: Mapped[str | None] = mapped_column(String(2000))
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+
+class AppliedWorkflowTaskModel(Base):
+    __tablename__ = "applied_workflow_tasks"
+    __table_args__ = (
+        Index("ix_applied_tasks_type_status", "workflow_type", "status"),
+        Index("ix_applied_tasks_created", "created_at"),
+    )
+
+    task_run_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    workflow_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="PENDING")
+    input_metadata: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )
+    input_content: Mapped[bytes | None] = mapped_column(LargeBinary)
+    result: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    prompt_version_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("prompt_versions.prompt_version_id", ondelete="SET NULL")
+    )
+    prompt_template_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("prompt_templates.prompt_template_id", ondelete="SET NULL")
+    )
+    prompt_version_number: Mapped[int | None] = mapped_column(Integer)
+    prompt_content_hash: Mapped[str | None] = mapped_column(String(64))
+    provider: Mapped[str | None] = mapped_column(String(50))
+    model: Mapped[str | None] = mapped_column(String(200))
+    model_configuration_hash: Mapped[str | None] = mapped_column(String(64))
+    application_version: Mapped[str | None] = mapped_column(String(100))
+    job_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("background_jobs.job_id", ondelete="SET NULL")
+    )
+    error_code: Mapped[str | None] = mapped_column(String(100))
+    error_message: Mapped[str | None] = mapped_column(String(2000))
+    created_by: Mapped[str] = mapped_column(String(200), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    duration_ms: Mapped[int | None] = mapped_column(Integer)
+    input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    estimated_cost: Mapped[Decimal] = mapped_column(
+        Numeric(14, 6), nullable=False, default=Decimal("0")
+    )
+
+
+class MediaAssetModel(Base):
+    __tablename__ = "media_assets"
+    __table_args__ = (
+        UniqueConstraint(
+            "created_by",
+            "idempotency_key",
+            name="uq_media_assets_actor_idempotency",
+        ),
+        Index("ix_media_assets_status_created", "status", "created_at"),
+        Index("ix_media_assets_campaign", "campaign_id"),
+    )
+
+    media_asset_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    campaign_id: Mapped[str | None] = mapped_column(
+        ForeignKey("campaigns.campaign_id", ondelete="SET NULL")
+    )
+    workflow_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("workflow_runs.workflow_id", ondelete="SET NULL")
+    )
+    task_run_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("applied_workflow_tasks.task_run_id", ondelete="SET NULL")
+    )
+    task_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    asset_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    status: Mapped[str] = mapped_column(String(50), nullable=False)
+    provider: Mapped[str] = mapped_column(String(50), nullable=False)
+    model: Mapped[str] = mapped_column(String(200), nullable=False)
+    prompt_version_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("prompt_versions.prompt_version_id", ondelete="SET NULL")
+    )
+    prompt_template_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("prompt_templates.prompt_template_id", ondelete="SET NULL")
+    )
+    prompt_version_number: Mapped[int | None] = mapped_column(Integer)
+    prompt_content_hash: Mapped[str | None] = mapped_column(String(64))
+    model_configuration_hash: Mapped[str | None] = mapped_column(String(64))
+    application_version: Mapped[str | None] = mapped_column(String(100))
+    generation_prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    negative_prompt: Mapped[str | None] = mapped_column(Text)
+    storage_uri: Mapped[str | None] = mapped_column(String(1000))
+    thumbnail_uri: Mapped[str | None] = mapped_column(String(1000))
+    mime_type: Mapped[str | None] = mapped_column(String(100))
+    width: Mapped[int | None] = mapped_column(Integer)
+    height: Mapped[int | None] = mapped_column(Integer)
+    duration_seconds: Mapped[int | None] = mapped_column(Integer)
+    estimated_cost: Mapped[Decimal | None] = mapped_column(Numeric(14, 6))
+    safety_status: Mapped[str] = mapped_column(String(50), nullable=False)
+    created_by: Mapped[str] = mapped_column(String(200), nullable=False)
+    idempotency_key: Mapped[str | None] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+    approved_by: Mapped[str | None] = mapped_column(String(200))
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    rejected_by: Mapped[str | None] = mapped_column(String(200))
+    rejected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    rejection_reason: Mapped[str | None] = mapped_column(String(1000))
+    error_code: Mapped[str | None] = mapped_column(String(100))
+    error_message: Mapped[str | None] = mapped_column(String(2000))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class MediaGenerationAttemptModel(Base):
+    __tablename__ = "media_generation_attempts"
+    __table_args__ = (
+        UniqueConstraint(
+            "media_asset_id", "attempt_number", name="uq_media_attempt_number"
+        ),
+        CheckConstraint(
+            "status IN ('STARTED', 'COMPLETED', 'FAILED', 'CANCELLED')",
+            name="ck_media_attempt_status",
+        ),
+        CheckConstraint(
+            "job_attempt_number IS NULL OR job_attempt_number > 0",
+            name="ck_media_attempt_job_number_positive",
+        ),
+        Index("ix_media_attempts_job_status", "job_id", "status"),
+        Index("ix_media_attempts_asset_status", "media_asset_id", "status"),
+    )
+
+    attempt_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    media_asset_id: Mapped[UUID] = mapped_column(
+        ForeignKey("media_assets.media_asset_id", ondelete="CASCADE"), nullable=False
+    )
+    job_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("background_jobs.job_id", ondelete="SET NULL")
+    )
+    worker_id: Mapped[str | None] = mapped_column(String(200))
+    job_attempt_number: Mapped[int | None] = mapped_column(Integer)
+    attempt_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    provider: Mapped[str] = mapped_column(String(50), nullable=False)
+    model: Mapped[str] = mapped_column(String(200), nullable=False)
+    provider_job_id: Mapped[str | None] = mapped_column(String(300))
+    status: Mapped[str] = mapped_column(String(50), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    duration_ms: Mapped[int | None] = mapped_column(Integer)
+    estimated_cost: Mapped[Decimal | None] = mapped_column(Numeric(14, 6))
+    error_code: Mapped[str | None] = mapped_column(String(100))
+    error_message: Mapped[str | None] = mapped_column(String(2000))
+
+
+class MediaReviewModel(Base):
+    __tablename__ = "media_reviews"
+    __table_args__ = (
+        UniqueConstraint(
+            "media_asset_id", "actor_id", name="uq_media_reviews_asset_actor"
+        ),
+        CheckConstraint(
+            "rating IS NULL OR rating BETWEEN 1 AND 5", name="ck_media_review_rating"
+        ),
+    )
+
+    media_review_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    media_asset_id: Mapped[UUID] = mapped_column(
+        ForeignKey("media_assets.media_asset_id", ondelete="CASCADE"), nullable=False
+    )
+    actor_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    decision: Mapped[str] = mapped_column(String(50), nullable=False)
+    rating: Mapped[int | None] = mapped_column(Integer)
+    comment: Mapped[str | None] = mapped_column(String(2000))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now
+    )
+
+
+class N8NWebhookReceiptModel(Base):
+    __tablename__ = "n8n_webhook_receipts"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_n8n_webhook_idempotency"),
+        UniqueConstraint("signature_hash", name="uq_n8n_webhook_signature_hash"),
+        Index("ix_n8n_webhook_received", "received_at"),
+    )
+
+    receipt_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    signature_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    endpoint: Mapped[str] = mapped_column(String(100), nullable=False)
+    correlation_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    response_status: Mapped[int] = mapped_column(Integer, nullable=False)
+    response_body: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now
     )

@@ -102,3 +102,79 @@ LLM_OUTPUT_TOKENS = Counter(
 LLM_ESTIMATED_COST = Counter(
     "llm_estimated_cost_total", "Estimated LLM cost", ("provider", "model")
 )
+
+PROMPT_EXPERIMENTS = Counter(
+    "prompt_experiments_total", "Prompt experiments", ("status",)
+)
+PROMPT_ACTIVATIONS = Counter(
+    "prompt_activation_total", "Prompt version activations", ("task_type",)
+)
+TASK_MINUTES_SAVED = Counter(
+    "task_minutes_saved_total", "Estimated task minutes saved", ("task_type",)
+)
+TASK_AUTOMATION_RATE = Histogram(
+    "task_automation_rate", "Task automation rate", ("task_type",)
+)
+TASK_FIRST_PASS_ACCEPTANCE = Gauge(
+    "task_first_pass_acceptance_rate", "First pass acceptance rate", ("task_type",)
+)
+USER_FEEDBACK_RATING = Histogram(
+    "user_feedback_rating", "Internal user feedback rating", ("task_type",)
+)
+PROVIDER_REQUESTS = Counter(
+    "provider_requests_total", "Normalized provider requests", ("provider", "operation")
+)
+PROVIDER_FALLBACKS = Counter(
+    "provider_fallback_total",
+    "Configured provider fallbacks",
+    ("from_provider", "to_provider"),
+)
+PROVIDER_COST = Counter("provider_cost_total", "Estimated provider cost", ("provider",))
+N8N_WEBHOOKS = Counter(
+    "n8n_webhooks_total", "n8n webhook outcomes", ("endpoint", "status")
+)
+MEDIA_GENERATIONS = Counter(
+    "media_generation_total", "Media generation outcomes", ("asset_type", "status")
+)
+MEDIA_GENERATION_DURATION = Histogram(
+    "media_generation_duration_seconds", "Media generation duration", ("asset_type",)
+)
+MEDIA_ATTEMPTS = Counter(
+    "media_attempts_total", "Media generation attempts", ("asset_type", "status")
+)
+MEDIA_ATTEMPT_FINALIZATION_FAILURES = Counter(
+    "media_attempt_terminalization_failures_total",
+    "Media attempt terminalization failures",
+)
+MEDIA_ATTEMPT_RECONCILIATIONS = Counter(
+    "media_attempt_reconciliations_total",
+    "Media attempt reconciliations",
+    ("status",),
+)
+MEDIA_ATTEMPT_ORPHANS = Counter(
+    "media_attempt_orphans_detected_total", "Orphan media attempts detected"
+)
+MEDIA_ATTEMPT_OWNERSHIP_LOST = Counter(
+    "media_attempt_ownership_lost_total", "Media attempt ownership losses"
+)
+PERSISTENCE_CONSTRAINT_CONFLICTS = Counter(
+    "persistence_constraint_conflicts_total",
+    "Known persistence constraint conflicts",
+    ("category",),
+)
+PERSISTENCE_UNKNOWN_CONSTRAINT_FAILURES = Counter(
+    "persistence_unknown_constraint_failures_total",
+    "Unknown persistence constraint failures",
+    ("operation",),
+)
+BUSINESS_OUTPUT_ACCEPTANCE = Counter(
+    "business_output_acceptance_total",
+    "Business output acceptance decisions",
+    ("decision",),
+)
+DATA_ANALYSIS_TASKS = Counter(
+    "data_analysis_tasks_total", "Data analysis tasks", ("status",)
+)
+DOCUMENT_PROCESSING_TASKS = Counter(
+    "document_processing_tasks_total", "Document processing tasks", ("status",)
+)

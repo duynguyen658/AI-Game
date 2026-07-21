@@ -1,0 +1,3 @@
+# Campaign Automation
+
+**Business problem:** Form submissions required manual re-entry. **Manual process:** Marketing copied fields, created a workflow, and notified reviewers. **AI workflow:** A signed n8n webhook creates campaign, workflow, and job atomically. **Prompt/provider choice:** Managed prompts with configured routing. **Validation:** HMAC, replay, idempotency, schema, policy, and approval gates. **Failure cases:** Stale signatures and duplicates are safe errors. **Human review:** Campaign approval remains authoritative. **Before/after metrics:** Baselines capture steps and duration. **Lesson learned:** Automation value depends on explicit duplicate and approval behavior.

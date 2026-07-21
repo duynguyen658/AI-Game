@@ -1,0 +1,3 @@
+# Business Impact Measurement
+
+**Business problem:** AI adoption lacked measurable outcomes. **Manual process:** Teams estimated gains in spreadsheets. **AI workflow:** Baselines, task impacts, and actor feedback produce traceable analytics. **Prompt/provider choice:** Stored beside each impact. **Validation:** Decimal formulas and zero-denominator tests. **Failure cases:** Duplicate impacts and stale feedback are rejected. **Human review:** Users report acceptance and editing effort. **Before/after metrics:** Minutes, steps, cost, acceptance, errors, revisions, and satisfaction. **Lesson learned:** Source-linked metrics beat model-generated KPI claims.

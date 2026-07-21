@@ -1,0 +1,40 @@
+{
+  "name": "AI Game - Critical Alert to Slack",
+  "nodes": [
+    {
+      "parameters": {"path": "ai-game-critical-alert", "httpMethod": "POST"},
+      "id": "alert-trigger",
+      "name": "Critical Alert Event",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {"conditions": {"options": {"caseSensitive": true}, "conditions": [{"leftValue": "={{$json.severity}}", "rightValue": "CRITICAL", "operator": {"type": "string", "operation": "equals"}}]}},
+      "id": "critical-only",
+      "name": "Critical Only",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {"operation": "post", "channel": "={{$env.CRITICAL_ALERT_SLACK_CHANNEL}}", "text": "={{'CRITICAL [' + $json.alert_id + '] ' + $json.summary}}"},
+      "id": "post-alert",
+      "name": "Post Critical Alert",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [720, 240],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput"
+    }
+  ],
+  "connections": {
+    "Critical Alert Event": {"main": [[{"node": "Critical Only", "type": "main", "index": 0}]]},
+    "Critical Only": {"main": [[{"node": "Post Critical Alert", "type": "main", "index": 0}], []]}
+  },
+  "settings": {"executionOrder": "v1"},
+  "active": false,
+  "versionId": "m7-critical-alert-v1"
+}

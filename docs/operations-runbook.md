@@ -20,9 +20,20 @@ possible, and closes the engine. After restart, expired RUNNING jobs are reclaim
 Outbox heartbeat failures invalidate the consumer result and roll back uncommitted
 side effects; an expired event is reclaimed by fencing version.
 
+For media recovery, run normal job reconciliation and inspect the media attempt audit.
+A terminal job must have no `STARTED` attempt. Failed or dead-letter jobs reconcile
+active attempts to `FAILED`; cancelled jobs reconcile them to `CANCELLED`. Ownership
+loss is fenced from success and outbox writes. Investigate
+`media_attempt_terminalization_failures_total` and
+`media_attempt_orphans_detected_total` before manually retrying a job.
+
 ## Retention and Dashboard
 
 `AUDIT_RETENTION_DAYS` documents the retention target; destructive purge is not
 automatic in v1. Export or archive audit data under an approved policy before manual
 deletion. The backend has no frontend, so the M6 dashboard is deferred; use operator
 APIs and Prometheus/Grafana integrations.
+
+M8 remains deferred: frontend shell, authentication UI, AI task workspace, prompt
+library and experiment UI, media studio, upload UI, impact dashboard, and feedback
+forms are not part of this backend milestone.

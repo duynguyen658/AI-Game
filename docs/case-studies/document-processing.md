@@ -1,0 +1,3 @@
+# Document Processing
+
+**Business problem:** Teams manually summarized briefs, reports, requirements, and notes. **Manual process:** Readers extracted decisions, gaps, risks, and actions. **AI workflow:** Bounded extraction classifies and structures content, then summarizes a sanitized excerpt. **Prompt/provider choice:** Managed prompt with untrusted-data framing. **Validation:** MIME/signature agreement, archive and page limits, macro rejection, and injection warnings. **Failure cases:** Empty scans require a separately approved OCR path. **Human review:** Users verify summaries and actions. **Before/after metrics:** Processing time, rework, acceptance, and satisfaction. **Lesson learned:** File safety and provenance are part of document AI quality.

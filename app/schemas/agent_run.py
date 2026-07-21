@@ -16,6 +16,17 @@ class AgentRunCreate(BaseModel):
     agent_name: AgentName
     model: str | None = Field(default=None, max_length=200)
     prompt_version: str = Field(min_length=1, max_length=50)
+    prompt_template_id: UUID | None = None
+    prompt_version_id: UUID | None = None
+    prompt_version_number: int | None = Field(default=None, ge=1)
+    prompt_content_hash: str | None = Field(default=None, min_length=64, max_length=64)
+    provider: str | None = Field(default=None, max_length=50)
+    model_configuration_hash: str | None = Field(
+        default=None, min_length=64, max_length=64
+    )
+    tool_registry_version: str | None = Field(default=None, max_length=50)
+    policy_version: str | None = Field(default=None, max_length=50)
+    application_version: str | None = Field(default=None, max_length=50)
 
 
 class AgentRunRead(AgentRunCreate):

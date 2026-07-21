@@ -5,6 +5,27 @@ bounded, observable Agentic Core. The application remains authoritative for work
 state, retries, policy and approval decisions, persistence, authorization, and audit
 history.
 
+Milestone 7 extends this foundation into an Applied AI workflow platform with managed
+prompt versions and experiments, business-impact analytics, OpenAI/Gemini/Anthropic
+adapters, signed n8n webhooks, review-gated media, deterministic CSV analysis, and safe
+PDF/DOCX/TXT processing. No frontend or automatic publishing is included.
+
+```bash
+alembic upgrade head
+python -m app.cli.seed_m7_demo
+```
+
+Use `LLM_PROVIDER=mock` and `IMAGE_PROVIDER=mock` for deterministic local runs. The
+stable workflow catalog is available at `GET /applied-workflows`; M7 architecture and
+integration guides begin in `docs/architecture-m7.md`.
+
+M7 hardening executes prompt experiments and provider comparisons as typed background
+jobs. Their metrics are generated from real case executions and cannot be supplied by
+clients. Data analysis, document processing, image generation, and storyboards resolve
+an active managed prompt and persist its immutable version/hash. Every started applied
+task reaches `COMPLETED`, `FAILED`, or `CANCELLED`; media assets additionally use the
+review states documented in `docs/media-workflow-guide.md`.
+
 ## Architecture
 
 ```text
@@ -386,3 +407,19 @@ product frontend, external publishing integrations, vector/semantic memory,
 autonomous supervision, enterprise integrations, and multi-region deployment.
 Agents still cannot approve campaigns, publish externally, execute arbitrary SQL or
 shell commands, or bypass deterministic policy and human approval.
+
+## M7 Final Hardening
+
+Media attempt success is fenced by the live job lease and commits attempt, asset,
+task, and ready-for-review outbox state atomically. Failure, cancellation, and
+terminal-job reconciliation leave no active `STARTED` attempt. Attempt numbers are
+allocated under an asset row lock, and stale workers cannot publish success.
+
+M7 services map only named PostgreSQL uniqueness constraints to conflicts or
+idempotent results. Unknown, foreign-key, check, and null violations remain safe
+persistence failures after rollback. Technical completion is separate from nullable
+human acceptance; acceptance analytics exclude unknown decisions from the
+denominator.
+
+The M8 frontend shell, authentication UI, task workspace, prompt and experiment UI,
+media studio, upload UI, impact dashboard, and feedback forms remain deferred.
