@@ -7,6 +7,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.constants import (
+    ProviderName,
     PromptExperimentStatus,
     PromptTemplateStatus,
     PromptVersionStatus,
@@ -81,23 +82,45 @@ class PromptExperimentCreate(BaseModel):
     prompt_template_id: UUID
     control_version_id: UUID
     candidate_version_id: UUID
-    dataset_id: UUID
+    evaluation_dataset_id: UUID
+    provider: ProviderName
+    model: str = Field(min_length=1, max_length=200)
     sample_size: int = Field(ge=1, le=10_000)
+    execution_settings: dict[str, Any] = Field(default_factory=dict)
 
 
 class PromptExperimentRun(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    control_metrics: dict[str, float]
-    candidate_metrics: dict[str, float]
-    evaluation_run_id: UUID | None = None
-
 
 class PromptExperimentRead(PromptExperimentCreate):
     experiment_id: UUID
     status: PromptExperimentStatus
+    job_id: UUID | None
+    dataset_version: str | None = None
+    model_configuration_hash: str | None = None
+    tool_registry_version: str | None = None
+    policy_version: str | None = None
+    application_version: str | None = None
+    error_code: str | None = None
+    error_message: str | None = None
     created_by: str
     started_at: datetime | None
     completed_at: datetime | None
     created_at: datetime
     result: dict[str, Any] | None = None
+
+
+class PromptExperimentCaseRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    case_result_id: UUID
+    evaluation_case_id: UUID
+    prompt_version_id: UUID
+    variant: str
+    status: str
+    output: dict[str, Any] | None
+    metrics: dict[str, Any]
+    error_code: str | None
+    error_message: str | None
+    created_at: datetime

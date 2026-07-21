@@ -95,7 +95,7 @@ class MockLLMClient:
         user_prompt: str,
         output_schema: type[BaseModel],
     ) -> BaseModel:
-        del system_prompt, user_prompt
+        del system_prompt
         await asyncio.sleep(0)
         self.call_count += 1
         if self.scripted_failures:
@@ -187,6 +187,18 @@ class MockLLMClient:
                     "provider_prompt": "Create a 30 second cyberpunk game launch storyboard.",
                 }
             )
+        if output_schema.__name__ == "AppliedEvaluationOutput":
+            return output_schema.model_validate(
+                {
+                    "response": f"Mock applied-AI response for: {user_prompt[:500]}",
+                    "requires_manual_review": False,
+                    "accepted_without_editing": True,
+                    "revision_required": False,
+                    "action_proposals": [],
+                }
+            )
+        if output_schema.__name__ == "DocumentConsistencyAnalysis":
+            return output_schema.model_validate({"findings": []})
         raise LLMResponseError("Mock client has no response for requested schema")
 
     async def run_agent_turn(

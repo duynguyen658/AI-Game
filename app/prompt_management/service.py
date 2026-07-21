@@ -9,8 +9,11 @@ from uuid import UUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import Settings, get_settings
 from app.core.constants import (
+    JobType,
     OutboxEventType,
+    ProviderName,
     PromptExperimentStatus,
     PromptTemplateStatus,
     PromptVersionStatus,
@@ -31,12 +34,17 @@ from app.database.models import (
     PromptVersionModel,
     SecurityEventModel,
 )
+from app.jobs.definitions import PromptExperimentRunJobPayload
+from app.jobs.queue import JobQueue
 from app.outbox.service import OutboxService
 from app.prompt_management.definitions import RenderedPrompt
+from app.prompt_management.execution import model_configuration_hash
 from app.prompt_management.renderer import PromptRenderer
 from app.repositories.prompt_experiment_repository import PromptExperimentRepository
 from app.repositories.prompt_repository import PromptRepository
+from app.repositories.evaluation_repository import EvaluationRepository
 from app.schemas.prompt import (
+    PromptExperimentCaseRead,
     PromptExperimentCreate,
     PromptExperimentRead,
     PromptExperimentRun,
@@ -49,10 +57,14 @@ from app.service.auth_service import AuthenticatedActor
 
 
 class PromptService:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(
+        self, session: AsyncSession, *, settings: Settings | None = None
+    ) -> None:
         self.session = session
+        self.settings = settings or get_settings()
         self.prompts = PromptRepository(session)
         self.experiments = PromptExperimentRepository(session)
+        self.evaluations = EvaluationRepository(session)
         self.renderer = PromptRenderer()
 
     async def create_template(
@@ -273,8 +285,29 @@ class PromptService:
             data.prompt_template_id
         }:
             raise M7ValidationError("Experiment versions must belong to one template")
+        dataset = await self.evaluations.get_dataset(data.evaluation_dataset_id)
+        if dataset is None:
+            raise M7ResourceNotFoundError("Evaluation dataset not found")
+        enabled_cases = await self.evaluations.count_enabled_cases(dataset.dataset_id)
+        if data.sample_size > enabled_cases:
+            raise M7ValidationError("Sample size exceeds enabled evaluation cases")
+        _validate_execution_settings(data.execution_settings)
         model = PromptExperimentModel(
-            **data.model_dump(),
+            prompt_template_id=data.prompt_template_id,
+            control_version_id=data.control_version_id,
+            candidate_version_id=data.candidate_version_id,
+            dataset_id=data.evaluation_dataset_id,
+            sample_size=data.sample_size,
+            provider=data.provider.value,
+            model=data.model,
+            execution_settings=sanitize_json(data.execution_settings),
+            dataset_version=dataset.version,
+            model_configuration_hash=model_configuration_hash(
+                data.provider.value, data.model, data.execution_settings
+            ),
+            tool_registry_version=self.settings.tool_registry_version,
+            policy_version=self.settings.policy_version,
+            application_version=self.settings.application_version,
             status=PromptExperimentStatus.DRAFT.value,
             created_by=actor.actor_id,
         )
@@ -308,32 +341,25 @@ class PromptService:
         actor: AuthenticatedActor,
     ) -> PromptExperimentRead:
         self._require_manager(actor)
-        model = await self._experiment(experiment_id)
+        del data
+        model = await self.experiments.get_for_update(experiment_id)
+        if model is None:
+            raise M7ResourceNotFoundError("Prompt experiment not found")
         if model.status != PromptExperimentStatus.DRAFT.value:
             raise M7ConflictError("Only draft experiments can run")
         model.status = PromptExperimentStatus.RUNNING.value
         model.started_at = datetime.now(UTC)
-        winner, reason = compare_metrics(data.control_metrics, data.candidate_metrics)
-        result = PromptExperimentResultModel(
-            experiment_id=experiment_id,
-            evaluation_run_id=data.evaluation_run_id,
-            control_metrics=sanitize_json(data.control_metrics),
-            candidate_metrics=sanitize_json(data.candidate_metrics),
-            winner=winner,
-            decision_reason=reason,
+        job = await JobQueue(self.session, settings=self.settings).enqueue(
+            JobType.PROMPT_EXPERIMENT_RUN,
+            PromptExperimentRunJobPayload(experiment_id=experiment_id),
+            created_by=actor.actor_id,
+            idempotency_key=f"prompt-experiment:{experiment_id}",
+            commit=False,
         )
-        self.session.add(result)
-        model.status = PromptExperimentStatus.COMPLETED.value
-        model.completed_at = datetime.now(UTC)
-        await OutboxService(self.session).add_event(
-            event_type=OutboxEventType.PROMPT_EXPERIMENT_COMPLETED,
-            aggregate_type="prompt_experiment",
-            aggregate_id=str(experiment_id),
-            payload={"experiment_id": str(experiment_id), "winner": winner},
-        )
-        self._audit(actor, "prompt_experiment_completed", experiment_id)
+        model.job_id = job.job_id
+        self._audit(actor, "prompt_experiment_started", experiment_id)
         await self.session.commit()
-        return experiment_to_schema(model, result)
+        return experiment_to_schema(model, None)
 
     async def cancel_experiment(
         self, experiment_id: UUID, *, actor: AuthenticatedActor
@@ -347,9 +373,22 @@ class PromptService:
             raise M7ConflictError("Experiment cannot be cancelled")
         model.status = PromptExperimentStatus.CANCELLED.value
         model.completed_at = datetime.now(UTC)
+        if model.job_id is not None:
+            await JobQueue(self.session, settings=self.settings).repository.cancel(
+                model.job_id
+            )
         self._audit(actor, "prompt_experiment_cancelled", experiment_id)
         await self.session.commit()
         return experiment_to_schema(model, await self.experiments.result(experiment_id))
+
+    async def experiment_cases(
+        self, experiment_id: UUID
+    ) -> list[PromptExperimentCaseRead]:
+        await self._experiment(experiment_id)
+        return [
+            PromptExperimentCaseRead.model_validate(row)
+            for row in await self.experiments.case_results(experiment_id)
+        ]
 
     async def _template(self, template_id: UUID) -> PromptTemplateModel:
         model = await self.prompts.get_template(template_id)
@@ -399,35 +438,6 @@ def prompt_content_hash(data: PromptVersionCreate) -> str:
     return hashlib.sha256(material.encode()).hexdigest()
 
 
-def compare_metrics(
-    control: dict[str, float], candidate: dict[str, float]
-) -> tuple[str | None, str]:
-    required = {
-        "quality",
-        "schema_validity",
-        "success_rate",
-        "latency",
-        "estimated_cost",
-    }
-    if required - control.keys() or required - candidate.keys():
-        raise M7ValidationError("Experiment metrics are incomplete")
-    control_score = (
-        control["quality"] + control["schema_validity"] + control["success_rate"]
-    )
-    candidate_score = (
-        candidate["quality"] + candidate["schema_validity"] + candidate["success_rate"]
-    )
-    candidate_score -= max(candidate["latency"] - control["latency"], 0) * 0.01
-    candidate_score -= max(candidate["estimated_cost"] - control["estimated_cost"], 0)
-    if abs(candidate_score - control_score) < 0.001:
-        return None, "No statistically meaningful deterministic winner"
-    winner = "candidate" if candidate_score > control_score else "control"
-    return (
-        winner,
-        f"{winner} has the higher quality-adjusted score; human promotion is required",
-    )
-
-
 def template_to_schema(model: PromptTemplateModel) -> PromptTemplateRead:
     return PromptTemplateRead.model_validate(model, from_attributes=True)
 
@@ -439,7 +449,30 @@ def version_to_schema(model: PromptVersionModel) -> PromptVersionRead:
 def experiment_to_schema(
     model: PromptExperimentModel, result: PromptExperimentResultModel | None
 ) -> PromptExperimentRead:
-    payload = PromptExperimentRead.model_validate(model, from_attributes=True)
+    payload = PromptExperimentRead(
+        prompt_template_id=model.prompt_template_id,
+        control_version_id=model.control_version_id,
+        candidate_version_id=model.candidate_version_id,
+        evaluation_dataset_id=model.dataset_id,
+        provider=ProviderName(model.provider),
+        model=model.model,
+        sample_size=model.sample_size,
+        execution_settings=model.execution_settings,
+        experiment_id=model.experiment_id,
+        status=PromptExperimentStatus(model.status),
+        job_id=model.job_id,
+        dataset_version=model.dataset_version,
+        model_configuration_hash=model.model_configuration_hash,
+        tool_registry_version=model.tool_registry_version,
+        policy_version=model.policy_version,
+        application_version=model.application_version,
+        error_code=model.error_code,
+        error_message=model.error_message,
+        created_by=model.created_by,
+        started_at=model.started_at,
+        completed_at=model.completed_at,
+        created_at=model.created_at,
+    )
     if result is None:
         return payload
     return payload.model_copy(
@@ -456,3 +489,12 @@ def experiment_to_schema(
             }
         }
     )
+
+
+def _validate_execution_settings(settings: dict[str, Any]) -> None:
+    allowed = {"temperature", "seed", "max_tokens"}
+    if set(settings) - allowed:
+        raise M7ValidationError("Unsupported experiment execution setting")
+    temperature = settings.get("temperature", 0)
+    if not isinstance(temperature, (int, float)) or temperature != 0:
+        raise M7ValidationError("Prompt experiments require temperature 0")

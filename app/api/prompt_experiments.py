@@ -7,6 +7,7 @@ from app.api.dependencies import SessionDependency, get_current_actor
 from app.prompt_management.service import PromptService
 from app.schemas.prompt import (
     PromptExperimentCreate,
+    PromptExperimentCaseRead,
     PromptExperimentRead,
     PromptExperimentRun,
 )
@@ -45,7 +46,18 @@ async def get_prompt_experiment(
     return await PromptService(session).get_experiment(experiment_id)
 
 
-@router.post("/{experiment_id}/run", response_model=PromptExperimentRead)
+@router.get("/{experiment_id}/results", response_model=list[PromptExperimentCaseRead])
+async def get_prompt_experiment_results(
+    experiment_id: UUID,
+    session: SessionDependency,
+    _: Annotated[AuthenticatedActor, Depends(get_current_actor)],
+) -> list[PromptExperimentCaseRead]:
+    return await PromptService(session).experiment_cases(experiment_id)
+
+
+@router.post(
+    "/{experiment_id}/run", response_model=PromptExperimentRead, status_code=202
+)
 async def run_prompt_experiment(
     experiment_id: UUID,
     data: PromptExperimentRun,

@@ -6,7 +6,11 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database.models import PromptExperimentModel, PromptExperimentResultModel
+from app.database.models import (
+    PromptExperimentCaseResultModel,
+    PromptExperimentModel,
+    PromptExperimentResultModel,
+)
 
 
 class PromptExperimentRepository:
@@ -20,6 +24,13 @@ class PromptExperimentRepository:
 
     async def get(self, experiment_id: UUID) -> PromptExperimentModel | None:
         return await self.session.get(PromptExperimentModel, experiment_id)
+
+    async def get_for_update(self, experiment_id: UUID) -> PromptExperimentModel | None:
+        return await self.session.scalar(
+            select(PromptExperimentModel)
+            .where(PromptExperimentModel.experiment_id == experiment_id)
+            .with_for_update()
+        )
 
     async def list(self, *, limit: int, offset: int) -> Sequence[PromptExperimentModel]:
         result = await self.session.execute(
@@ -36,3 +47,16 @@ class PromptExperimentRepository:
                 PromptExperimentResultModel.experiment_id == experiment_id
             )
         )
+
+    async def case_results(
+        self, experiment_id: UUID
+    ) -> Sequence[PromptExperimentCaseResultModel]:
+        result = await self.session.execute(
+            select(PromptExperimentCaseResultModel)
+            .where(PromptExperimentCaseResultModel.experiment_id == experiment_id)
+            .order_by(
+                PromptExperimentCaseResultModel.evaluation_case_id,
+                PromptExperimentCaseResultModel.variant,
+            )
+        )
+        return result.scalars().all()
