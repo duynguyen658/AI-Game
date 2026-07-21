@@ -53,6 +53,6 @@ async def run_workflow(
         job_id=job.job_id,
         workflow_id=workflow_id,
         status=job.status,
-        status_url=f"/jobs/{job.job_id}",
+        status_url=f"/jobs/{job.job_id}/status",
         correlation_id=job.correlation_id,
     )

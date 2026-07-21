@@ -51,6 +51,25 @@ class JobRead(BaseModel):
     attempts: list[JobAttemptRead] = Field(default_factory=list)
 
 
+class JobStatusRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    job_id: UUID
+    job_type: JobType
+    status: JobStatus
+    attempt_count: int = Field(ge=0)
+    max_attempts: int = Field(ge=1)
+    available_at: datetime
+    cancel_requested: bool
+    correlation_id: str
+    created_at: datetime
+    updated_at: datetime
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+
+
 class WorkflowEnqueueResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

@@ -77,6 +77,22 @@ async def get_prompt_version(
     return await PromptService(session).get_version(version_id)
 
 
+@router.get(
+    "/prompt-templates/{template_id}/versions",
+    response_model=list[PromptVersionRead],
+)
+async def list_prompt_versions(
+    template_id: UUID,
+    session: SessionDependency,
+    _: Annotated[AuthenticatedActor, Depends(get_current_actor)],
+    limit: Annotated[int, Query(ge=1, le=100)] = 100,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> list[PromptVersionRead]:
+    return await PromptService(session).list_versions(
+        template_id, limit=limit, offset=offset
+    )
+
+
 async def _transition(
     version_id: UUID,
     data: ExpectedVersionRequest,

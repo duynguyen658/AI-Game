@@ -105,6 +105,16 @@ async def test_health_metrics_operator_authorization_and_lifecycles(
     queued = await api_client.post(f"/workflows/{workflow_id}/run")
     assert queued.status_code == 202
     job_id = queued.json()["job_id"]
+    assert queued.json()["status_url"] == f"/jobs/{job_id}/status"
+    assert (await api_client.get(f"/jobs/{job_id}/status")).status_code == 401
+    safe_status = await api_client.get(
+        f"/jobs/{job_id}/status",
+        headers={"x-actor-id": "marketing-1", "x-actor-role": "marketing"},
+    )
+    assert safe_status.status_code == 200
+    assert safe_status.json()["job_id"] == job_id
+    assert "payload" not in safe_status.json()
+    assert "locked_by" not in safe_status.json()
     job = await api_client.get(f"/jobs/{job_id}", headers=MANAGER_HEADERS)
     assert job.status_code == 200
     cancelled = await api_client.post(f"/jobs/{job_id}/cancel", headers=MANAGER_HEADERS)
@@ -138,6 +148,14 @@ async def test_health_metrics_operator_authorization_and_lifecycles(
     assert [event["occurred_at"] for event in timeline.json()] == sorted(
         event["occurred_at"] for event in timeline.json()
     )
+    user_timeline = await api_client.get(
+        f"/operations/workflows/{workflow_id}/timeline",
+        headers={"x-actor-id": "marketing-1", "x-actor-role": "marketing"},
+    )
+    assert user_timeline.status_code == 200
+    assert (
+        await api_client.get(f"/operations/workflows/{workflow_id}/timeline")
+    ).status_code == 401
 
     dataset = await api_client.post(
         "/evaluations/datasets",

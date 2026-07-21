@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from app.api.dependencies import SessionDependency, get_current_actor
 from app.schemas.provider import (
@@ -37,6 +37,16 @@ async def create_provider_comparison(
 ) -> ProviderComparisonRead:
     AuthService().require_operator(actor)
     return await ProviderComparisonService(session).create(data, actor=actor)
+
+
+@router.get("/provider-comparisons", response_model=list[ProviderComparisonRead])
+async def list_provider_comparisons(
+    session: SessionDependency,
+    _: Annotated[AuthenticatedActor, Depends(get_current_actor)],
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> list[ProviderComparisonRead]:
+    return await ProviderComparisonService(session).list(limit=limit, offset=offset)
 
 
 @router.get(

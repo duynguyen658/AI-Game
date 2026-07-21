@@ -143,6 +143,15 @@ class PromptService:
     async def get_version(self, version_id: UUID) -> PromptVersionRead:
         return version_to_schema(await self._version(version_id))
 
+    async def list_versions(
+        self, template_id: UUID, *, limit: int, offset: int
+    ) -> list[PromptVersionRead]:
+        await self._template(template_id)
+        models = await self.prompts.list_versions(
+            template_id, limit=min(limit, 100), offset=max(offset, 0)
+        )
+        return [version_to_schema(model) for model in models]
+
     async def transition(
         self,
         version_id: UUID,

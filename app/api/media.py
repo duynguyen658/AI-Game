@@ -2,9 +2,12 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, status
+from fastapi.responses import FileResponse
 
 from app.api.dependencies import SessionDependency, get_current_actor
+from app.core.config import get_settings
 from app.media.service import MediaService
+from app.media.storage import LocalMediaStorage
 from app.core.exceptions import M7ValidationError
 from app.schemas.media import (
     ImageGenerationRequest,
@@ -42,6 +45,21 @@ async def get_media_asset(
     _: Annotated[AuthenticatedActor, Depends(get_current_actor)],
 ) -> MediaAssetRead:
     return await MediaService(session).get(asset_id)
+
+
+@router.get("/assets/{asset_id}/content", response_class=FileResponse)
+async def get_media_content(
+    asset_id: UUID,
+    session: SessionDependency,
+    _: Annotated[AuthenticatedActor, Depends(get_current_actor)],
+) -> FileResponse:
+    asset = await MediaService(session).get(asset_id)
+    if asset.storage_uri is None or asset.mime_type is None:
+        raise M7ValidationError("Media content is not ready")
+    path = LocalMediaStorage(get_settings().media_storage_root).resolve(
+        asset.storage_uri
+    )
+    return FileResponse(path, media_type=asset.mime_type)
 
 
 @router.post("/assets/{asset_id}/approve", response_model=MediaAssetRead)

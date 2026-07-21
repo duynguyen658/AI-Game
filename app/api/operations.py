@@ -32,10 +32,9 @@ async def get_operations_summary(
 async def get_workflow_timeline(
     workflow_id: UUID,
     session: SessionDependency,
-    actor: Annotated[AuthenticatedActor, Depends(get_current_actor)],
+    _: Annotated[AuthenticatedActor, Depends(get_current_actor)],
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
 ) -> list[TimelineEvent]:
-    AuthService().require_operator(actor)
     return await TimelineService(session).workflow(workflow_id, limit=limit)
 
 
@@ -43,10 +42,9 @@ async def get_workflow_timeline(
 async def get_campaign_timeline(
     campaign_id: str,
     session: SessionDependency,
-    actor: Annotated[AuthenticatedActor, Depends(get_current_actor)],
+    _: Annotated[AuthenticatedActor, Depends(get_current_actor)],
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
 ) -> list[TimelineEvent]:
-    AuthService().require_operator(actor)
     return await TimelineService(session).campaign(campaign_id, limit=limit)
 
 
