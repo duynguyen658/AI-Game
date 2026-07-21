@@ -102,3 +102,46 @@ LLM_OUTPUT_TOKENS = Counter(
 LLM_ESTIMATED_COST = Counter(
     "llm_estimated_cost_total", "Estimated LLM cost", ("provider", "model")
 )
+
+PROMPT_EXPERIMENTS = Counter(
+    "prompt_experiments_total", "Prompt experiments", ("status",)
+)
+PROMPT_ACTIVATIONS = Counter(
+    "prompt_activation_total", "Prompt version activations", ("task_type",)
+)
+TASK_MINUTES_SAVED = Counter(
+    "task_minutes_saved_total", "Estimated task minutes saved", ("task_type",)
+)
+TASK_AUTOMATION_RATE = Histogram(
+    "task_automation_rate", "Task automation rate", ("task_type",)
+)
+TASK_FIRST_PASS_ACCEPTANCE = Gauge(
+    "task_first_pass_acceptance_rate", "First pass acceptance rate", ("task_type",)
+)
+USER_FEEDBACK_RATING = Histogram(
+    "user_feedback_rating", "Internal user feedback rating", ("task_type",)
+)
+PROVIDER_REQUESTS = Counter(
+    "provider_requests_total", "Normalized provider requests", ("provider", "operation")
+)
+PROVIDER_FALLBACKS = Counter(
+    "provider_fallback_total",
+    "Configured provider fallbacks",
+    ("from_provider", "to_provider"),
+)
+PROVIDER_COST = Counter("provider_cost_total", "Estimated provider cost", ("provider",))
+N8N_WEBHOOKS = Counter(
+    "n8n_webhooks_total", "n8n webhook outcomes", ("endpoint", "status")
+)
+MEDIA_GENERATIONS = Counter(
+    "media_generation_total", "Media generation outcomes", ("asset_type", "status")
+)
+MEDIA_GENERATION_DURATION = Histogram(
+    "media_generation_duration_seconds", "Media generation duration", ("asset_type",)
+)
+DATA_ANALYSIS_TASKS = Counter(
+    "data_analysis_tasks_total", "Data analysis tasks", ("status",)
+)
+DOCUMENT_PROCESSING_TASKS = Counter(
+    "document_processing_tasks_total", "Document processing tasks", ("status",)
+)

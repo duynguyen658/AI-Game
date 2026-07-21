@@ -8,6 +8,13 @@ from pydantic import BaseModel
 
 from app.core.exceptions import LLMProviderError, LLMResponseError, LLMTimeoutError
 from app.llm.agent_turn import AgentMessage, AgentTurn
+from app.llm.capabilities import (
+    CompletionRequest,
+    NormalizedCompletion,
+    NormalizedToolCall,
+    NormalizedUsage,
+)
+from app.core.constants import ProviderName
 from app.schemas.campaign import (
     BriefAnalysis,
     DiscordContent,
@@ -32,6 +39,54 @@ class MockLLMClient:
         )
         self.call_count = 0
         self.scripted_turns: Deque[AgentTurn | Exception] = deque(scripted_turns or [])
+
+    async def complete(self, request: CompletionRequest) -> NormalizedCompletion:
+        await asyncio.sleep(0)
+        self.call_count += 1
+        return NormalizedCompletion(
+            provider=ProviderName.MOCK,
+            model=request.model,
+            content=f"Mock response for: {request.user_prompt[:200]}",
+            usage=NormalizedUsage(input_tokens=10, output_tokens=10),
+            finish_reason="stop",
+        )
+
+    async def complete_structured(
+        self, request: CompletionRequest, output_schema: type[BaseModel]
+    ) -> NormalizedCompletion:
+        output = await self.generate_structured(
+            system_prompt=request.system_prompt,
+            user_prompt=request.user_prompt,
+            output_schema=output_schema,
+        )
+        return NormalizedCompletion(
+            provider=ProviderName.MOCK,
+            model=request.model,
+            structured=output.model_dump(mode="json"),
+            usage=NormalizedUsage(input_tokens=10, output_tokens=20),
+            finish_reason="stop",
+        )
+
+    async def complete_with_tools(
+        self, request: CompletionRequest
+    ) -> NormalizedCompletion:
+        calls = []
+        if request.tools:
+            tool = request.tools[0]
+            calls.append(
+                NormalizedToolCall(
+                    call_id="mock-call-1",
+                    name=str(tool.get("name", "mock_tool")),
+                    arguments={},
+                )
+            )
+        return NormalizedCompletion(
+            provider=ProviderName.MOCK,
+            model=request.model,
+            tool_calls=calls,
+            usage=NormalizedUsage(input_tokens=10, output_tokens=5),
+            finish_reason="tool_calls" if calls else "stop",
+        )
 
     async def generate_structured(
         self,
@@ -100,6 +155,37 @@ class MockLLMClient:
                 issues=[],
                 suggestions=["Localize CTA for each target market."],
                 requires_human_review=True,
+            )
+        if output_schema.__name__ == "VideoStoryboard":
+            return output_schema.model_validate(
+                {
+                    "title": "Cyber Legends Launch Storyboard",
+                    "objective": "Introduce the launch campaign and drive registration.",
+                    "target_duration_seconds": 30,
+                    "aspect_ratio": "16:9",
+                    "scenes": [
+                        {
+                            "order": 1,
+                            "duration_seconds": 10,
+                            "shot_description": "Open on the neon city and hero team.",
+                            "voice_over": "A new legend is about to begin.",
+                            "on_screen_text": "Cyber Legends",
+                            "generation_prompt": "Wide neon city reveal with a game hero team.",
+                        },
+                        {
+                            "order": 2,
+                            "duration_seconds": 20,
+                            "shot_description": "Show gameplay beats and the registration reward.",
+                            "voice_over": "Pre-register now and claim launch rewards.",
+                            "on_screen_text": "Pre-register now",
+                            "generation_prompt": "Fast gameplay montage ending on a reward card.",
+                        },
+                    ],
+                    "voice_over": "A new legend is about to begin. Pre-register now.",
+                    "music_mood": "Energetic cyberpunk",
+                    "call_to_action": "Pre-register now",
+                    "provider_prompt": "Create a 30 second cyberpunk game launch storyboard.",
+                }
             )
         raise LLMResponseError("Mock client has no response for requested schema")
 

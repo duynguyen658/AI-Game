@@ -1,0 +1,105 @@
+from __future__ import annotations
+
+from datetime import datetime
+from decimal import Decimal
+from uuid import UUID
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class TaskBaselineCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    task_type: str = Field(min_length=1, max_length=100)
+    department: str = Field(min_length=1, max_length=100)
+    manual_duration_minutes: Decimal = Field(ge=0, max_digits=12, decimal_places=2)
+    manual_steps: int = Field(ge=0, le=100_000)
+    historical_error_rate: Decimal = Field(ge=0, le=1)
+    baseline_cost: Decimal = Field(ge=0, max_digits=14, decimal_places=4)
+    sample_size: int = Field(ge=1)
+    source: str = Field(min_length=1, max_length=500)
+
+
+class TaskBaselineRead(TaskBaselineCreate):
+    task_baseline_id: UUID
+    version: int
+    created_by: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class TaskImpactCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    task_type: str = Field(min_length=1, max_length=100)
+    department: str | None = Field(default=None, max_length=100)
+    workflow_id: UUID | None = None
+    job_id: UUID | None = None
+    agent_run_id: UUID | None = None
+    prompt_version_id: UUID | None = None
+    provider: str = Field(min_length=1, max_length=50)
+    model: str = Field(min_length=1, max_length=200)
+    manual_duration_baseline: Decimal = Field(ge=0)
+    ai_duration_minutes: Decimal = Field(ge=0)
+    steps_before: int = Field(ge=0)
+    steps_after: int = Field(ge=0)
+    automated_steps: int = Field(ge=0)
+    output_accepted: bool
+    accepted_without_editing: bool
+    editing_minutes: Decimal = Field(ge=0)
+    rework_count: int = Field(ge=0)
+    error_count: int = Field(ge=0)
+    estimated_cost: Decimal = Field(ge=0)
+
+
+class TaskImpactRead(TaskImpactCreate):
+    ai_task_impact_id: UUID
+    task_run_id: UUID
+    minutes_saved: Decimal
+    automation_rate: Decimal
+    created_at: datetime
+
+
+class UserFeedbackCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    task_type: str = Field(min_length=1, max_length=100)
+    workflow_id: UUID | None = None
+    agent_run_id: UUID | None = None
+    prompt_version_id: UUID | None = None
+    provider: str = Field(min_length=1, max_length=50)
+    model: str = Field(min_length=1, max_length=200)
+    rating: int = Field(ge=1, le=5)
+    helpfulness: int = Field(ge=1, le=5)
+    accuracy: int = Field(ge=1, le=5)
+    ease_of_use: int = Field(ge=1, le=5)
+    accepted_without_editing: bool
+    editing_minutes: Decimal = Field(ge=0)
+    rework_count: int = Field(ge=0)
+    would_use_again: bool
+    comment: str | None = Field(default=None, max_length=2000)
+    expected_version: int | None = Field(default=None, ge=1)
+
+
+class UserFeedbackRead(UserFeedbackCreate):
+    user_feedback_id: UUID
+    task_run_id: UUID
+    actor_id: str
+    version: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class BusinessImpactAnalytics(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    completed_tasks: int
+    total_minutes_saved: Decimal
+    average_automation_rate: Decimal
+    first_pass_acceptance_rate: Decimal
+    revision_rate: Decimal
+    error_rate: Decimal
+    user_satisfaction: Decimal
+    would_use_again_rate: Decimal
+    total_estimated_cost: Decimal
+    series: list[dict[str, object]]
