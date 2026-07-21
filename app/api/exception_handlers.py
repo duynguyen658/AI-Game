@@ -47,6 +47,10 @@ from app.core.exceptions import (
     EvaluationNotFoundError,
     RateLimitExceededError,
     PolicyDeniedError,
+    M7ConflictError,
+    M7ResourceNotFoundError,
+    M7ValidationError,
+    WebhookAuthenticationError,
 )
 
 ERROR_STATUS_MAP: dict[type[ApplicationError], int] = {
@@ -62,6 +66,7 @@ ERROR_STATUS_MAP: dict[type[ApplicationError], int] = {
     JobNotFoundError: status.HTTP_404_NOT_FOUND,
     AlertNotFoundError: status.HTTP_404_NOT_FOUND,
     EvaluationNotFoundError: status.HTTP_404_NOT_FOUND,
+    M7ResourceNotFoundError: status.HTTP_404_NOT_FOUND,
     CampaignAlreadyExistsError: status.HTTP_409_CONFLICT,
     WorkflowAlreadyActiveError: status.HTTP_409_CONFLICT,
     AgentRunAlreadyActiveError: status.HTTP_409_CONFLICT,
@@ -79,8 +84,11 @@ ERROR_STATUS_MAP: dict[type[ApplicationError], int] = {
     ActionScopeConflictError: status.HTTP_409_CONFLICT,
     JobConflictError: status.HTTP_409_CONFLICT,
     EvaluationConflictError: status.HTTP_409_CONFLICT,
+    M7ConflictError: status.HTTP_409_CONFLICT,
     JobLeaseLostError: status.HTTP_409_CONFLICT,
     JobPayloadError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    M7ValidationError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    WebhookAuthenticationError: status.HTTP_401_UNAUTHORIZED,
     RateLimitExceededError: status.HTTP_429_TOO_MANY_REQUESTS,
     ActionExpiredError: status.HTTP_410_GONE,
     ActionNotAllowedError: status.HTTP_403_FORBIDDEN,

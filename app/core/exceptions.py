@@ -288,3 +288,23 @@ class RateLimitExceededError(ApplicationError):
 
 class RequestBodyTooLargeError(ApplicationError):
     error_code = "REQUEST_BODY_TOO_LARGE"
+
+
+class M7ResourceNotFoundError(ApplicationError):
+    error_code = "M7_RESOURCE_NOT_FOUND"
+
+
+class M7ConflictError(ApplicationError):
+    error_code = "M7_CONFLICT"
+
+
+class M7ValidationError(ApplicationError):
+    error_code = "M7_VALIDATION_ERROR"
+
+
+class ProviderCapabilityError(M7ValidationError):
+    error_code = "PROVIDER_CAPABILITY_UNAVAILABLE"
+
+
+class WebhookAuthenticationError(AuthenticationError):
+    error_code = "WEBHOOK_AUTHENTICATION_FAILED"

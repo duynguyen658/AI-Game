@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TypeVar
+import hashlib
+import json
+from typing import TypedDict, TypeVar
 from uuid import UUID
 
 import structlog
@@ -30,6 +32,7 @@ from app.core.exceptions import (
     AgentToolCallLimitError,
     AgentActionProposalLimitError,
     ApplicationError,
+    M7ResourceNotFoundError,
 )
 from app.llm.base import LLMClient
 from app.observability.tracing import traced_operation
@@ -40,8 +43,19 @@ from app.service.agent_query_service import AgentReadQueryService
 from app.service.workflow_service import WorkflowService
 from app.service.action_service import ActionService
 from app.service.memory_service import MemoryService
+from app.prompt_management.service import PromptService
 
 OutputT = TypeVar("OutputT", bound=BaseModel)
+
+
+class PromptRunMetadata(TypedDict):
+    label: str
+    version_number: int
+    content_hash: str
+    template_id: UUID | None
+    version_id: UUID | None
+
+
 logger = structlog.get_logger()
 LIMIT_ERRORS = (
     AgentIterationLimitError,
@@ -108,13 +122,33 @@ class AgenticOrchestrator:
         agent: BaseSpecialistAgent[OutputT],
         context: CampaignContext,
     ) -> OutputT:
+        prompt_metadata = await self._resolve_prompt(agent, context)
+        configuration_material = json.dumps(
+            {
+                "provider": self.settings.llm_provider,
+                "model": self.settings.llm_model,
+                "timeout": self.settings.llm_timeout_seconds,
+            },
+            sort_keys=True,
+        )
         run = await self.run_service.create_run(
             AgentRunCreate(
                 workflow_id=context.workflow_id,
                 campaign_id=context.campaign_id,
                 agent_name=agent.name,
                 model=self.settings.llm_model or self.settings.llm_provider,
-                prompt_version=agent.prompt_version,
+                prompt_version=prompt_metadata["label"],
+                prompt_template_id=prompt_metadata["template_id"],
+                prompt_version_id=prompt_metadata["version_id"],
+                prompt_version_number=prompt_metadata["version_number"],
+                prompt_content_hash=prompt_metadata["content_hash"],
+                provider=self.settings.llm_provider,
+                model_configuration_hash=hashlib.sha256(
+                    configuration_material.encode()
+                ).hexdigest(),
+                tool_registry_version=self.settings.tool_registry_version,
+                policy_version=self.settings.policy_version,
+                application_version=self.settings.application_version,
             )
         )
         await self.run_service.start_run(run.agent_run_id)
@@ -178,6 +212,34 @@ class AgenticOrchestrator:
             if wrapped is exc:
                 raise
             raise wrapped from exc
+
+    async def _resolve_prompt(
+        self, agent: BaseSpecialistAgent[OutputT], context: CampaignContext
+    ) -> PromptRunMetadata:
+        context_payload = json.dumps(context.model_dump(mode="json"), ensure_ascii=True)
+        try:
+            managed = await PromptService(self.session).resolve(
+                agent_name=agent.name.value,
+                values={"context": context_payload},
+            )
+        except M7ResourceNotFoundError:
+            system_prompt = agent.build_system_prompt()
+            return {
+                "label": agent.prompt_version,
+                "version_number": 1,
+                "content_hash": hashlib.sha256(system_prompt.encode()).hexdigest(),
+                "template_id": None,
+                "version_id": None,
+            }
+        agent.system_prompt_override = managed.system_prompt
+        agent.initial_prompt_override = managed.user_prompt
+        return {
+            "label": f"managed-v{managed.prompt_version_number}",
+            "template_id": managed.prompt_template_id,
+            "version_id": managed.prompt_version_id,
+            "version_number": managed.prompt_version_number,
+            "content_hash": managed.content_hash,
+        }
 
     async def _record_agent_failure(
         self,

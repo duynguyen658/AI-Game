@@ -22,9 +22,13 @@ class BaseSpecialistAgent(ABC, Generic[OutputT]):
     allowed_tool_names: frozenset[str]
     prompt_version = "m5-v1"
     prompt_file: str
+    system_prompt_override: str | None = None
+    initial_prompt_override: str | None = None
 
     def build_system_prompt(self) -> str:
-        prompt = (PROMPT_DIRECTORY / self.prompt_file).read_text(encoding="utf-8")
+        prompt = self.system_prompt_override or (
+            PROMPT_DIRECTORY / self.prompt_file
+        ).read_text(encoding="utf-8")
         schema = json.dumps(self.output_schema.model_json_schema(), ensure_ascii=True)
         action_schema = json.dumps(
             AgentActionProposal.model_json_schema(), ensure_ascii=True
@@ -37,6 +41,8 @@ class BaseSpecialistAgent(ABC, Generic[OutputT]):
         )
 
     def build_initial_messages(self, context: CampaignContext) -> list[AgentMessage]:
+        if self.initial_prompt_override is not None:
+            return [AgentMessage(role="user", content=self.initial_prompt_override)]
         payload = json.dumps(context.model_dump(mode="json"), ensure_ascii=True)
         return [
             AgentMessage(
