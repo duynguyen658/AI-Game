@@ -42,6 +42,7 @@ class EvaluationRepository:
                     case_order=order,
                     campaign_input=case.campaign_input,
                     actual_output=case.actual_output,
+                    system_config=case.system_config,
                     expected=case.expected,
                     thresholds=case.thresholds,
                     enabled=case.enabled,
@@ -59,6 +60,18 @@ class EvaluationRepository:
                 select(func.count(EvaluationCaseModel.evaluation_case_id)).where(
                     EvaluationCaseModel.dataset_id == dataset_id,
                     EvaluationCaseModel.enabled.is_(True),
+                )
+            )
+            or 0
+        )
+
+    async def count_cases_with_actual_output(self, dataset_id: UUID) -> int:
+        return int(
+            await self.session.scalar(
+                select(func.count(EvaluationCaseModel.evaluation_case_id)).where(
+                    EvaluationCaseModel.dataset_id == dataset_id,
+                    EvaluationCaseModel.enabled.is_(True),
+                    EvaluationCaseModel.actual_output.is_not(None),
                 )
             )
             or 0

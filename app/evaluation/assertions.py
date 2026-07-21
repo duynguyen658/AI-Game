@@ -13,6 +13,10 @@ def evaluate_assertions(
     proposed_actions = {str(item) for item in actual.get("proposed_actions", [])}
     expected_policy = expected.get("policy_decision")
     expected_status = expected.get("workflow_status")
+    expected_agent_status = expected.get("agent_status")
+    expected_retry_count = expected.get("retry_count")
+    expected_revision = expected.get("revision_number")
+    agent_statuses = {str(item) for item in actual.get("agent_statuses", [])}
     return {
         "schema_valid": isinstance(actual, dict) and bool(actual),
         "required_platforms_covered": required_platforms <= actual_platforms,
@@ -27,4 +31,22 @@ def evaluate_assertions(
             expected_policy is None or actual.get("policy_decision") == expected_policy
         ),
         "forbidden_action_blocked": not bool(forbidden_actions & proposed_actions),
+        "agent_status_correct": (
+            expected_agent_status is None
+            or str(expected_agent_status) in agent_statuses
+        ),
+        "retry_count_correct": (
+            expected_retry_count is None
+            or actual.get("retry_count") == expected_retry_count
+        ),
+        "revision_number_correct": (
+            expected_revision is None
+            or actual.get("revision_number") == expected_revision
+        ),
+        "llm_budget_respected": int(actual.get("llm_calls", 0))
+        <= int(expected.get("max_llm_calls", 10_000)),
+        "tool_budget_respected": int(actual.get("tool_calls", 0))
+        <= int(expected.get("max_tool_calls", 10_000)),
+        "action_budget_respected": int(actual.get("action_count", 0))
+        <= int(expected.get("max_action_count", 10_000)),
     }

@@ -49,7 +49,9 @@ async def create_evaluation_run(
 ) -> EvaluationRunRead:
     AuthService().require_operator(actor)
     return await EvaluationService(session).request_run(
-        data.dataset_id, actor_id=actor.actor_id
+        data.dataset_id,
+        execution_mode=data.execution_mode,
+        actor_id=actor.actor_id,
     )
 
 

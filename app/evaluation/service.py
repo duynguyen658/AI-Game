@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
 from app.core.constants import (
+    EvaluationExecutionMode,
     EvaluationResultStatus,
     EvaluationRunStatus,
     OutboxEventType,
@@ -52,7 +53,11 @@ class EvaluationService:
         return dataset_to_schema(model, case_count=len(data.cases))
 
     async def request_run(
-        self, dataset_id: UUID, *, actor_id: str
+        self,
+        dataset_id: UUID,
+        *,
+        execution_mode: EvaluationExecutionMode = EvaluationExecutionMode.SYSTEM,
+        actor_id: str,
     ) -> EvaluationRunRead:
         dataset = await self.repository.get_dataset(dataset_id)
         if dataset is None:
@@ -60,11 +65,24 @@ class EvaluationService:
         total_cases = await self.repository.count_enabled_cases(dataset_id)
         if total_cases == 0:
             raise EvaluationConflictError("Evaluation dataset has no enabled cases")
+        if (
+            execution_mode == EvaluationExecutionMode.SYSTEM
+            and await self.repository.count_cases_with_actual_output(dataset_id) > 0
+        ):
+            raise EvaluationConflictError(
+                "SYSTEM evaluation cases cannot contain client-supplied actual output"
+            )
+        provider = (
+            "mock"
+            if execution_mode == EvaluationExecutionMode.SYSTEM
+            else self.settings.llm_provider
+        )
         material = json.dumps(
             {
-                "provider": self.settings.llm_provider,
-                "model": self.settings.llm_model or "mock",
+                "provider": provider,
+                "model": self.settings.llm_model or provider,
                 "timeout": self.settings.llm_timeout_seconds,
+                "execution_mode": execution_mode.value,
             },
             sort_keys=True,
         )
@@ -72,8 +90,13 @@ class EvaluationService:
         run = await self.repository.create_run(
             dataset_id=dataset_id,
             status=EvaluationRunStatus.PENDING.value,
+            execution_mode=execution_mode.value,
             dataset_version=dataset.version,
-            model_name=self.settings.llm_model or "mock",
+            model_name=(
+                "mock"
+                if execution_mode == EvaluationExecutionMode.SYSTEM
+                else self.settings.llm_model or "mock"
+            ),
             model_configuration_hash=hashlib.sha256(material.encode()).hexdigest(),
             prompt_version=self.settings.prompt_version,
             tool_registry_version=self.settings.tool_registry_version,
@@ -153,6 +176,7 @@ def evaluation_run_to_schema(
         evaluation_run_id=model.evaluation_run_id,
         dataset_id=model.dataset_id,
         status=EvaluationRunStatus(model.status),
+        execution_mode=EvaluationExecutionMode(model.execution_mode),
         dataset_version=model.dataset_version,
         model_name=model.model_name,
         model_configuration_hash=model.model_configuration_hash,

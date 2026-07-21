@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from uuid import UUID
 
 from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,7 +21,13 @@ class CampaignRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def create(self, payload: CampaignCreate) -> CampaignModel:
+    async def create(
+        self,
+        payload: CampaignCreate,
+        *,
+        evaluation_run_id: UUID | None = None,
+        evaluation_case_id: UUID | None = None,
+    ) -> CampaignModel:
         model = CampaignModel(
             campaign_id=payload.campaign_id,
             game_name=payload.game_name,
@@ -34,6 +41,9 @@ class CampaignRepository:
             promotion=payload.promotion,
             raw_brief=payload.raw_brief,
             status=CampaignStatus.RECEIVED.value,
+            is_evaluation=evaluation_run_id is not None,
+            evaluation_run_id=evaluation_run_id,
+            evaluation_case_id=evaluation_case_id,
         )
         self.session.add(model)
         await self.session.flush()
@@ -66,6 +76,7 @@ class CampaignRepository:
         status: CampaignStatus | None = None,
     ) -> Sequence[CampaignModel]:
         query: Select[tuple[CampaignModel]] = select(CampaignModel)
+        query = query.where(CampaignModel.is_evaluation.is_(False))
         if status is not None:
             query = query.where(CampaignModel.status == status.value)
         query = (

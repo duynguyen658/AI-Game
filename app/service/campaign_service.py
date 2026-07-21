@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from uuid import UUID
+
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,11 +21,21 @@ class CampaignService:
         self.session = session
         self.repository = CampaignRepository(session)
 
-    async def create_campaign(self, payload: CampaignCreate) -> CampaignRecord:
+    async def create_campaign(
+        self,
+        payload: CampaignCreate,
+        *,
+        evaluation_run_id: UUID | None = None,
+        evaluation_case_id: UUID | None = None,
+    ) -> CampaignRecord:
         if await self.repository.exists(payload.campaign_id):
             raise CampaignAlreadyExistsError("Campaign already exists")
         try:
-            model = await self.repository.create(payload)
+            model = await self.repository.create(
+                payload,
+                evaluation_run_id=evaluation_run_id,
+                evaluation_case_id=evaluation_case_id,
+            )
             await self.session.commit()
         except IntegrityError as exc:
             await self.session.rollback()

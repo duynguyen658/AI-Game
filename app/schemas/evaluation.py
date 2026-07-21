@@ -6,14 +6,19 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.core.constants import EvaluationResultStatus, EvaluationRunStatus
+from app.core.constants import (
+    EvaluationExecutionMode,
+    EvaluationResultStatus,
+    EvaluationRunStatus,
+)
 
 
 class EvaluationCaseCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str = Field(min_length=1, max_length=200)
     campaign_input: dict[str, Any]
-    actual_output: dict[str, Any]
+    actual_output: dict[str, Any] | None = None
+    system_config: dict[str, Any] = Field(default_factory=dict)
     expected: dict[str, Any]
     thresholds: dict[str, Any] = Field(default_factory=dict)
     enabled: bool = True
@@ -57,6 +62,7 @@ class EvaluationRunRead(BaseModel):
     evaluation_run_id: UUID
     dataset_id: UUID
     status: EvaluationRunStatus
+    execution_mode: EvaluationExecutionMode
     dataset_version: str
     model_name: str
     model_configuration_hash: str
@@ -81,3 +87,4 @@ class EvaluationRunRead(BaseModel):
 class EvaluationRunCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     dataset_id: UUID
+    execution_mode: EvaluationExecutionMode = EvaluationExecutionMode.SYSTEM
