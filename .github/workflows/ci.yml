@@ -83,7 +83,7 @@ jobs:
         run: python -m pytest tests/integration/test_m6_outbox.py tests/integration/test_m6_jobs.py tests/unit/observability/test_observability.py -v
 
       - name: M7 applied AI blocker tests
-        run: python -m pytest tests/integration/test_m7_applied_ai.py tests/unit/llm/test_provider_contracts.py tests/unit/integrations tests/unit/applied_workflows tests/unit/media -v
+        run: python -m pytest tests/integration/test_m7_applied_ai.py tests/unit/llm/test_provider_contracts.py tests/unit/integrations tests/unit/applied_workflows tests/unit/media tests/unit/prompt_management -v
 
       - name: API and worker smoke
         run: python -c "from app.main import app; from app.jobs.handlers import build_job_handlers; from app.database.session import AsyncSessionLocal; assert app and build_job_handlers(AsyncSessionLocal)"
@@ -115,7 +115,7 @@ jobs:
         run: docker run --rm cyber-legends-api:${{ github.sha }} python -c "from app.main import app; assert app"
 
       - name: Smoke worker image
-        run: docker run --rm cyber-legends-worker:${{ github.sha }} python -c "from app.jobs.handlers import build_job_handlers; from app.database.session import AsyncSessionLocal; assert len(build_job_handlers(AsyncSessionLocal)) >= 10"
+        run: docker run --rm cyber-legends-worker:${{ github.sha }} python -c "from app.jobs.handlers import build_job_handlers; from app.database.session import AsyncSessionLocal; assert len(build_job_handlers(AsyncSessionLocal)) >= 12"
 
       - name: Scan API image
         uses: aquasecurity/trivy-action@v0.36.0

@@ -19,6 +19,13 @@ Use `LLM_PROVIDER=mock` and `IMAGE_PROVIDER=mock` for deterministic local runs. 
 stable workflow catalog is available at `GET /applied-workflows`; M7 architecture and
 integration guides begin in `docs/architecture-m7.md`.
 
+M7 hardening executes prompt experiments and provider comparisons as typed background
+jobs. Their metrics are generated from real case executions and cannot be supplied by
+clients. Data analysis, document processing, image generation, and storyboards resolve
+an active managed prompt and persist its immutable version/hash. Every started applied
+task reaches `COMPLETED`, `FAILED`, or `CANCELLED`; media assets additionally use the
+review states documented in `docs/media-workflow-guide.md`.
+
 ## Architecture
 
 ```text
