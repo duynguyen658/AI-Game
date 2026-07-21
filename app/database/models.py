@@ -1382,6 +1382,11 @@ class AITaskImpactModel(Base):
             "automation_rate >= 0 AND automation_rate <= 1",
             name="ck_ai_task_impact_automation_rate",
         ),
+        CheckConstraint(
+            "NOT accepted_without_editing OR "
+            "(output_accepted IS TRUE AND editing_minutes = 0 AND rework_count = 0)",
+            name="ck_ai_task_impact_first_pass_acceptance",
+        ),
         Index("ix_ai_task_impacts_type_created", "task_type", "created_at"),
         Index("ix_ai_task_impacts_provider_model", "provider", "model"),
     )
@@ -1418,7 +1423,10 @@ class AITaskImpactModel(Base):
     steps_after: Mapped[int] = mapped_column(Integer, nullable=False)
     automated_steps: Mapped[int] = mapped_column(Integer, nullable=False)
     automation_rate: Mapped[Decimal] = mapped_column(Numeric(8, 6), nullable=False)
-    output_accepted: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    task_completed_successfully: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True
+    )
+    output_accepted: Mapped[bool | None] = mapped_column(Boolean)
     accepted_without_editing: Mapped[bool] = mapped_column(Boolean, nullable=False)
     editing_minutes: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     rework_count: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -1436,6 +1444,11 @@ class UserFeedbackModel(Base):
         CheckConstraint("rating BETWEEN 1 AND 5", name="ck_user_feedback_rating"),
         CheckConstraint("editing_minutes >= 0", name="ck_user_feedback_editing"),
         CheckConstraint("rework_count >= 0", name="ck_user_feedback_rework"),
+        CheckConstraint(
+            "NOT accepted_without_editing OR "
+            "(output_accepted IS TRUE AND editing_minutes = 0 AND rework_count = 0)",
+            name="ck_user_feedback_first_pass_acceptance",
+        ),
         Index("ix_user_feedback_type_created", "task_type", "created_at"),
     )
 
@@ -1463,6 +1476,7 @@ class UserFeedbackModel(Base):
     helpfulness: Mapped[int] = mapped_column(Integer, nullable=False)
     accuracy: Mapped[int] = mapped_column(Integer, nullable=False)
     ease_of_use: Mapped[int] = mapped_column(Integer, nullable=False)
+    output_accepted: Mapped[bool | None] = mapped_column(Boolean)
     accepted_without_editing: Mapped[bool] = mapped_column(Boolean, nullable=False)
     editing_minutes: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     rework_count: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -1601,6 +1615,16 @@ class MediaGenerationAttemptModel(Base):
         UniqueConstraint(
             "media_asset_id", "attempt_number", name="uq_media_attempt_number"
         ),
+        CheckConstraint(
+            "status IN ('STARTED', 'COMPLETED', 'FAILED', 'CANCELLED')",
+            name="ck_media_attempt_status",
+        ),
+        CheckConstraint(
+            "job_attempt_number IS NULL OR job_attempt_number > 0",
+            name="ck_media_attempt_job_number_positive",
+        ),
+        Index("ix_media_attempts_job_status", "job_id", "status"),
+        Index("ix_media_attempts_asset_status", "media_asset_id", "status"),
     )
 
     attempt_id: Mapped[UUID] = mapped_column(
@@ -1609,6 +1633,11 @@ class MediaGenerationAttemptModel(Base):
     media_asset_id: Mapped[UUID] = mapped_column(
         ForeignKey("media_assets.media_asset_id", ondelete="CASCADE"), nullable=False
     )
+    job_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("background_jobs.job_id", ondelete="SET NULL")
+    )
+    worker_id: Mapped[str | None] = mapped_column(String(200))
+    job_attempt_number: Mapped[int | None] = mapped_column(Integer)
     attempt_number: Mapped[int] = mapped_column(Integer, nullable=False)
     provider: Mapped[str] = mapped_column(String(50), nullable=False)
     model: Mapped[str] = mapped_column(String(200), nullable=False)

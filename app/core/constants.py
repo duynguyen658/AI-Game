@@ -334,6 +334,20 @@ class MediaAssetStatus(StrEnum):
     CANCELLED = "CANCELLED"
 
 
+class MediaAttemptStatus(StrEnum):
+    STARTED = "STARTED"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+
+
+class MediaAttemptUpdateResult(StrEnum):
+    UPDATED = "UPDATED"
+    NOT_FOUND = "NOT_FOUND"
+    INVALID_STATE = "INVALID_STATE"
+    OWNERSHIP_LOST = "OWNERSHIP_LOST"
+
+
 class AppliedWorkflowType(StrEnum):
     CAMPAIGN_CONTENT = "CAMPAIGN_CONTENT"
     DATA_ANALYSIS = "DATA_ANALYSIS"

@@ -250,7 +250,12 @@ def build_job_handlers(
         await control.checkpoint()
         await MediaProcessor(
             session_factory, settings=config, llm_client=client_factory()
-        ).generate_image(payload.media_asset_id)
+        ).generate_image(
+            payload.media_asset_id,
+            job=job,
+            worker_id=control.worker_id,
+            checkpoint=control.checkpoint,
+        )
 
     async def video_storyboard(job: LeasedJob, control: JobControl) -> None:
         payload = validate_job_payload(job.job_type, job.payload)
@@ -259,7 +264,12 @@ def build_job_handlers(
         await control.checkpoint()
         await MediaProcessor(
             session_factory, settings=config, llm_client=client_factory()
-        ).generate_storyboard(payload.media_asset_id)
+        ).generate_storyboard(
+            payload.media_asset_id,
+            job=job,
+            worker_id=control.worker_id,
+            checkpoint=control.checkpoint,
+        )
 
     async def prompt_experiment_run(job: LeasedJob, control: JobControl) -> None:
         payload = validate_job_payload(job.job_type, job.payload)

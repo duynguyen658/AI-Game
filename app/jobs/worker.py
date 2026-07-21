@@ -16,6 +16,7 @@ from app.core.exceptions import (
     JobCancelledError,
     JobLeaseLostError,
     JobPayloadError,
+    MediaAttemptLeaseLostError,
 )
 from app.database.session import AsyncSessionLocal
 from app.jobs.definitions import LeasedJob
@@ -150,7 +151,12 @@ class JobWorker:
                     await task
                     if lease_lost.is_set():
                         raise JobLeaseLostError("Job lease was lost during execution")
-                    await control.checkpoint()
+                    async with self.session_factory() as session:
+                        media_success = await JobTerminalReconciler(
+                            session
+                        ).ensure_success_consistency(job)
+                    if not media_success:
+                        await control.checkpoint()
                     async with self.session_factory() as session:
                         await JobQueue(session, settings=self.settings).complete(
                             job.job_id, worker_id=self.worker_id
@@ -172,6 +178,13 @@ class JobWorker:
                         outcome = "lease_lost"
                     else:
                         raise
+                except MediaAttemptLeaseLostError:
+                    logger.warning(
+                        "media_attempt_ownership_lost",
+                        job_id=str(job.job_id),
+                        worker_id=self.worker_id,
+                    )
+                    outcome = "lease_lost"
                 except Exception as exc:
                     if not lease_lost.is_set():
                         await self._fail(job, exc, retryable=self._is_retryable(exc))

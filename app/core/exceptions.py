@@ -90,6 +90,38 @@ class PersistenceError(ApplicationError):
     error_code = "PERSISTENCE_ERROR"
 
 
+class UnknownConstraintPersistenceError(PersistenceError):
+    error_code = "UNKNOWN_CONSTRAINT_PERSISTENCE_ERROR"
+
+
+class MediaPersistenceError(PersistenceError):
+    error_code = "MEDIA_PERSISTENCE_ERROR"
+
+
+class BusinessImpactPersistenceError(PersistenceError):
+    error_code = "BUSINESS_IMPACT_PERSISTENCE_ERROR"
+
+
+class FeedbackPersistenceError(PersistenceError):
+    error_code = "FEEDBACK_PERSISTENCE_ERROR"
+
+
+class MediaAttemptFinalizationError(PersistenceError):
+    error_code = "MEDIA_ATTEMPT_FINALIZATION_ERROR"
+
+
+class MediaAttemptReconciliationError(PersistenceError):
+    error_code = "MEDIA_ATTEMPT_RECONCILIATION_ERROR"
+
+
+class MediaAttemptStateConflictError(ApplicationError):
+    error_code = "MEDIA_ATTEMPT_STATE_CONFLICT"
+
+
+class MediaAttemptLeaseLostError(ApplicationError):
+    error_code = "MEDIA_ATTEMPT_LEASE_LOST"
+
+
 class AgentRunNotFoundError(ApplicationError):
     error_code = "AGENT_RUN_NOT_FOUND"
 

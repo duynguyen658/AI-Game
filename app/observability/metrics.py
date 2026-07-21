@@ -139,6 +139,39 @@ MEDIA_GENERATIONS = Counter(
 MEDIA_GENERATION_DURATION = Histogram(
     "media_generation_duration_seconds", "Media generation duration", ("asset_type",)
 )
+MEDIA_ATTEMPTS = Counter(
+    "media_attempts_total", "Media generation attempts", ("asset_type", "status")
+)
+MEDIA_ATTEMPT_FINALIZATION_FAILURES = Counter(
+    "media_attempt_terminalization_failures_total",
+    "Media attempt terminalization failures",
+)
+MEDIA_ATTEMPT_RECONCILIATIONS = Counter(
+    "media_attempt_reconciliations_total",
+    "Media attempt reconciliations",
+    ("status",),
+)
+MEDIA_ATTEMPT_ORPHANS = Counter(
+    "media_attempt_orphans_detected_total", "Orphan media attempts detected"
+)
+MEDIA_ATTEMPT_OWNERSHIP_LOST = Counter(
+    "media_attempt_ownership_lost_total", "Media attempt ownership losses"
+)
+PERSISTENCE_CONSTRAINT_CONFLICTS = Counter(
+    "persistence_constraint_conflicts_total",
+    "Known persistence constraint conflicts",
+    ("category",),
+)
+PERSISTENCE_UNKNOWN_CONSTRAINT_FAILURES = Counter(
+    "persistence_unknown_constraint_failures_total",
+    "Unknown persistence constraint failures",
+    ("operation",),
+)
+BUSINESS_OUTPUT_ACCEPTANCE = Counter(
+    "business_output_acceptance_total",
+    "Business output acceptance decisions",
+    ("decision",),
+)
 DATA_ANALYSIS_TASKS = Counter(
     "data_analysis_tasks_total", "Data analysis tasks", ("status",)
 )
