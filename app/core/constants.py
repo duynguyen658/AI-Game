@@ -195,6 +195,11 @@ class JobAttemptStatus(StrEnum):
     CANCELLED = "CANCELLED"
 
 
+class JobErrorClassification(StrEnum):
+    RETRYABLE = "RETRYABLE"
+    NON_RETRYABLE = "NON_RETRYABLE"
+
+
 class WorkerStatus(StrEnum):
     STARTING = "STARTING"
     RUNNING = "RUNNING"
@@ -208,6 +213,13 @@ class OutboxStatus(StrEnum):
     PROCESSED = "PROCESSED"
     FAILED = "FAILED"
     DEAD_LETTER = "DEAD_LETTER"
+
+
+class LeaseUpdateResult(StrEnum):
+    UPDATED = "UPDATED"
+    NOT_FOUND = "NOT_FOUND"
+    INVALID_STATE = "INVALID_STATE"
+    LEASE_LOST = "LEASE_LOST"
 
 
 class OutboxEventType(StrEnum):
@@ -242,6 +254,11 @@ class EvaluationRunStatus(StrEnum):
     SUCCEEDED = "SUCCEEDED"
     FAILED = "FAILED"
     CANCELLED = "CANCELLED"
+
+
+class EvaluationExecutionMode(StrEnum):
+    SNAPSHOT = "SNAPSHOT"
+    SYSTEM = "SYSTEM"
 
 
 class EvaluationResultStatus(StrEnum):

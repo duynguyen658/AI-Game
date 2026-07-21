@@ -8,7 +8,13 @@ from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpe
 from pydantic import BaseModel
 
 from app.core.config import Settings
-from app.core.exceptions import LLMProviderError, LLMResponseError, LLMTimeoutError
+from app.core.exceptions import (
+    LLMProviderError,
+    LLMProviderUnavailableError,
+    LLMRateLimitError,
+    LLMResponseError,
+    LLMTimeoutError,
+)
 from app.llm.agent_turn import AgentMessage, AgentToolRequest, AgentTurn, LLMUsage
 from app.observability.metrics import (
     LLM_DURATION,
@@ -66,8 +72,12 @@ class OpenAILLMClient:
             )
         except APITimeoutError as exc:
             raise LLMTimeoutError("LLM provider timed out") from exc
-        except (APIConnectionError, APIStatusError) as exc:
-            raise LLMProviderError("LLM provider request failed") from exc
+        except APIConnectionError as exc:
+            raise LLMProviderUnavailableError(
+                "LLM provider is temporarily unavailable"
+            ) from exc
+        except APIStatusError as exc:
+            raise _provider_status_error(exc) from exc
 
         parsed = completion.choices[0].message.parsed
         if parsed is None:
@@ -130,8 +140,12 @@ class OpenAILLMClient:
             )
         except APITimeoutError as exc:
             raise LLMTimeoutError("LLM provider timed out") from exc
-        except (APIConnectionError, APIStatusError) as exc:
-            raise LLMProviderError("LLM provider request failed") from exc
+        except APIConnectionError as exc:
+            raise LLMProviderUnavailableError(
+                "LLM provider is temporarily unavailable"
+            ) from exc
+        except APIStatusError as exc:
+            raise _provider_status_error(exc) from exc
 
         message = completion.choices[0].message
         usage = completion.usage
@@ -219,3 +233,11 @@ class OpenAILLMClient:
             LLM_INPUT_TOKENS.labels(provider, model).inc(input_tokens)
         if output_tokens:
             LLM_OUTPUT_TOKENS.labels(provider, model).inc(output_tokens)
+
+
+def _provider_status_error(error: APIStatusError) -> LLMProviderError:
+    if error.status_code == 429:
+        return LLMRateLimitError("LLM provider rate limit exceeded")
+    if error.status_code >= 500:
+        return LLMProviderUnavailableError("LLM provider is temporarily unavailable")
+    return LLMProviderError("LLM provider rejected the request")

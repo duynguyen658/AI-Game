@@ -12,11 +12,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.constants import JobStatus, JobType
-from app.core.exceptions import JobLeaseLostError
+from app.core.exceptions import JobLeaseLostError, LLMTimeoutError
 from app.database.models import BackgroundJobModel, JobAttemptModel
 from app.database.session import AsyncSessionLocal
-from app.jobs.definitions import MemoryReconciliationJobPayload
+from app.jobs.definitions import LeasedJob, MemoryReconciliationJobPayload
 from app.jobs.queue import JobQueue
+from app.jobs.worker import JobControl, JobWorker
 
 pytestmark = [
     pytest.mark.postgres,
@@ -182,3 +183,77 @@ async def test_unknown_job_type_is_dead_lettered_without_crashing(
     await db_session.refresh(model)
     assert model.status == JobStatus.DEAD_LETTER.value
     assert model.error_code == "UNKNOWN_JOB_TYPE"
+
+
+@pytest.mark.asyncio
+async def test_worker_retries_only_explicit_transient_error() -> None:
+    settings = get_settings().model_copy(
+        update={
+            "job_batch_size": 1,
+            "job_retry_base_seconds": 1,
+            "job_retry_max_seconds": 1,
+        }
+    )
+    async with AsyncSessionLocal() as session:
+        job = await JobQueue(session, settings=settings).enqueue(
+            JobType.MEMORY_RECONCILIATION,
+            MemoryReconciliationJobPayload(limit=1),
+            created_by="retry-classification-test",
+            max_attempts=2,
+            idempotency_key="explicit-transient-job",
+        )
+
+    calls = 0
+
+    async def transient_once(_: LeasedJob, __: JobControl) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise LLMTimeoutError("deterministic timeout")
+
+    worker = JobWorker(
+        "retry-classification-worker",
+        {JobType.MEMORY_RECONCILIATION: transient_once},
+        settings=settings,
+    )
+    assert await worker.run_once() == 1
+    async with AsyncSessionLocal() as session:
+        pending = await session.get(BackgroundJobModel, job.job_id)
+        assert pending is not None
+        assert pending.status == JobStatus.PENDING.value
+        assert pending.attempt_count == 1
+        pending.available_at = datetime.now(UTC)
+        await session.commit()
+
+    assert await worker.run_once() == 1
+    async with AsyncSessionLocal() as session:
+        succeeded = await session.get(BackgroundJobModel, job.job_id)
+        assert succeeded is not None
+        assert succeeded.status == JobStatus.SUCCEEDED.value
+        assert succeeded.attempt_count == 2
+
+
+@pytest.mark.asyncio
+async def test_worker_does_not_retry_unknown_exception() -> None:
+    async with AsyncSessionLocal() as session:
+        job = await JobQueue(session).enqueue(
+            JobType.MEMORY_RECONCILIATION,
+            MemoryReconciliationJobPayload(limit=1),
+            created_by="retry-classification-test",
+            max_attempts=5,
+            idempotency_key="unknown-permanent-job",
+        )
+
+    async def unknown_failure(_: LeasedJob, __: JobControl) -> None:
+        raise RuntimeError("deterministic permanent failure")
+
+    worker = JobWorker(
+        "non-retryable-worker",
+        {JobType.MEMORY_RECONCILIATION: unknown_failure},
+    )
+    assert await worker.run_once() == 1
+    async with AsyncSessionLocal() as session:
+        failed = await session.get(BackgroundJobModel, job.job_id)
+        assert failed is not None
+        assert failed.status == JobStatus.DEAD_LETTER.value
+        assert failed.attempt_count == 1

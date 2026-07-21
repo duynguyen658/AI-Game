@@ -18,5 +18,6 @@ class OutboxEvent(BaseModel):
     payload: dict[str, Any]
     attempt_count: int = Field(ge=1)
     max_attempts: int = Field(ge=1)
+    lease_version: int = Field(ge=1)
     correlation_id: str
     trace_id: str | None = None

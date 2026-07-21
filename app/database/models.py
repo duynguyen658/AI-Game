@@ -28,6 +28,7 @@ from app.core.constants import (
     AlertStatus,
     AgentRunStatus,
     CampaignStatus,
+    EvaluationExecutionMode,
     EvaluationResultStatus,
     EvaluationRunStatus,
     JobAttemptStatus,
@@ -50,6 +51,7 @@ class CampaignModel(Base):
             name="ck_campaign_quality_score_range",
         ),
         Index("ix_campaigns_status_created_at", "status", "created_at"),
+        Index("ix_campaigns_evaluation_owner", "is_evaluation", "evaluation_run_id"),
     )
 
     campaign_id: Mapped[str] = mapped_column(String(100), primary_key=True)
@@ -75,6 +77,13 @@ class CampaignModel(Base):
     quality_score: Mapped[int | None] = mapped_column(Integer, index=True)
     retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    is_evaluation: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    evaluation_run_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("evaluation_runs.evaluation_run_id", ondelete="SET NULL")
+    )
+    evaluation_case_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("evaluation_cases.evaluation_case_id", ondelete="SET NULL")
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -121,6 +130,9 @@ class WorkflowRunModel(Base):
         ),
         Index("ix_workflow_runs_campaign_status", "campaign_id", "status"),
         Index("ix_workflow_runs_parent_workflow_id", "parent_workflow_id"),
+        Index(
+            "ix_workflow_runs_evaluation_owner", "is_evaluation", "evaluation_run_id"
+        ),
         Index(
             "uq_workflow_runs_one_active_per_campaign",
             "campaign_id",
@@ -176,6 +188,13 @@ class WorkflowRunModel(Base):
     )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     lock_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    is_evaluation: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    evaluation_run_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("evaluation_runs.evaluation_run_id", ondelete="SET NULL")
+    )
+    evaluation_case_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("evaluation_cases.evaluation_case_id", ondelete="SET NULL")
+    )
 
     campaign: Mapped[CampaignModel] = relationship(back_populates="workflow_runs")
     parent_workflow: Mapped[WorkflowRunModel | None] = relationship(
@@ -755,6 +774,7 @@ class OutboxEventModel(Base):
         ),
         Index("ix_outbox_events_aggregate", "aggregate_type", "aggregate_id"),
         Index("ix_outbox_events_locked", "status", "locked_at"),
+        Index("ix_outbox_events_lease_expiry", "status", "lease_expires_at"),
     )
 
     outbox_event_id: Mapped[UUID] = mapped_column(
@@ -774,6 +794,9 @@ class OutboxEventModel(Base):
     )
     locked_by: Mapped[str | None] = mapped_column(String(200))
     locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    lease_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     idempotency_key: Mapped[str] = mapped_column(String(64), nullable=False)
     correlation_id: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -867,7 +890,12 @@ class EvaluationCaseModel(Base):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     case_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     campaign_input: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
-    actual_output: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    actual_output: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB(none_as_null=True)
+    )
+    system_config: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )
     expected: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     thresholds: Mapped[dict[str, Any]] = mapped_column(
         JSONB, nullable=False, default=dict
@@ -903,6 +931,9 @@ class EvaluationRunModel(Base):
     )
     status: Mapped[str] = mapped_column(
         String(50), nullable=False, default=EvaluationRunStatus.PENDING.value
+    )
+    execution_mode: Mapped[str] = mapped_column(
+        String(50), nullable=False, default=EvaluationExecutionMode.SYSTEM.value
     )
     dataset_version: Mapped[str] = mapped_column(String(100), nullable=False)
     model_name: Mapped[str] = mapped_column(String(200), nullable=False)

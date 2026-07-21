@@ -51,6 +51,7 @@ class JobQueue:
         idempotency_key: str | None = None,
         correlation_id: str | None = None,
         trace_id: str | None = None,
+        commit: bool = True,
     ) -> JobRead:
         raw_payload = (
             payload.model_dump(mode="json")
@@ -67,36 +68,41 @@ class JobQueue:
         )
         trace = trace_id or get_context_value("trace_id")
         try:
-            model = await self.repository.create(
-                job_type=job_type,
-                payload=safe_payload,
-                priority=min(max(priority, 0), 100),
-                max_attempts=max_attempts or self.settings.job_max_attempts,
-                available_at=available_at or datetime.now(UTC),
-                idempotency_key=key,
-                correlation_id=correlation,
-                trace_id=trace,
-                created_by=sanitize_text(created_by, max_characters=200),
-            )
-            await self.session.commit()
+            async with self.session.begin_nested():
+                model = await self.repository.create(
+                    job_type=job_type,
+                    payload=safe_payload,
+                    priority=min(max(priority, 0), 100),
+                    max_attempts=max_attempts or self.settings.job_max_attempts,
+                    available_at=available_at or datetime.now(UTC),
+                    idempotency_key=key,
+                    correlation_id=correlation,
+                    trace_id=trace,
+                    created_by=sanitize_text(created_by, max_characters=200),
+                )
         except IntegrityError as exc:
-            await self.session.rollback()
             if get_constraint_name(exc) != "uq_background_jobs_idempotency":
+                if commit:
+                    await self.session.rollback()
                 raise PersistenceError("Unable to persist background job") from exc
             duplicate = await self.repository.find_by_idempotency_key(key)
             if duplicate is None:
                 raise PersistenceError(
                     "Unable to load idempotent background job"
                 ) from exc
-            await self.session.commit()
+            if commit:
+                await self.session.commit()
             return job_to_schema(duplicate)
+        if commit:
+            await self.session.commit()
         logger.info(
-            "job_enqueued",
+            "job_enqueued" if commit else "job_enqueue_staged",
             job_id=str(model.job_id),
             job_type=model.job_type,
             correlation_id=model.correlation_id,
         )
-        JOBS_ENQUEUED.labels(job_type.value).inc()
+        if commit:
+            JOBS_ENQUEUED.labels(job_type.value).inc()
         return job_to_schema(model)
 
     async def get(self, job_id: UUID) -> JobRead:

@@ -56,7 +56,7 @@ class OutboxService:
                     or get_context_value("correlation_id")
                     or str(uuid4()),
                     trace_id=trace_id or get_context_value("trace_id"),
-                    max_attempts=self.settings.job_max_attempts,
+                    max_attempts=self.settings.outbox_max_attempts,
                 )
         except IntegrityError as exc:
             if get_constraint_name(exc) != "uq_outbox_events_idempotency":

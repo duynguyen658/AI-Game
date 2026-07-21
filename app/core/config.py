@@ -39,6 +39,7 @@ class Settings(BaseSettings):
 
     n8n_webhook_secret: SecretStr = SecretStr("change-me")
     approval_token_secret: SecretStr = SecretStr("change-me")
+    metrics_token: SecretStr = SecretStr("change-me")
 
     rate_limit_requests: int = Field(default=20, ge=1)
     rate_limit_window_seconds: int = Field(default=60, ge=1)
@@ -67,13 +68,20 @@ class Settings(BaseSettings):
     job_batch_size: int = Field(default=10, ge=1, le=100)
     worker_stale_after_seconds: int = Field(default=120, ge=10, le=3600)
 
+    outbox_lease_seconds: int = Field(default=60, ge=5, le=3600)
+    outbox_heartbeat_seconds: int = Field(default=15, ge=1, le=600)
+    outbox_batch_size: int = Field(default=10, ge=1, le=100)
+    outbox_max_attempts: int = Field(default=5, ge=1, le=20)
+    outbox_retry_base_seconds: int = Field(default=5, ge=1, le=3600)
+    outbox_retry_max_seconds: int = Field(default=300, ge=1, le=86_400)
+
     max_request_body_bytes: int = Field(default=1_048_576, ge=1024, le=10_485_760)
     cors_allowed_origins: str = "http://localhost:3000,http://localhost:5173"
     otel_enabled: bool = False
     otel_service_name: str = "cyber-legends-api"
     outbox_ready_backlog_limit: int = Field(default=1000, ge=1)
     audit_retention_days: int = Field(default=365, ge=30, le=3650)
-    application_version: str = "0.6.0"
+    application_version: str = "1.0.0-rc.1"
     prompt_version: str = "m6"
     tool_registry_version: str = "m5"
     policy_version: str = "m5"
@@ -99,6 +107,14 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_provider_and_secrets(self) -> "Settings":
+        if self.outbox_heartbeat_seconds >= self.outbox_lease_seconds:
+            raise ValueError(
+                "OUTBOX_HEARTBEAT_SECONDS must be lower than OUTBOX_LEASE_SECONDS"
+            )
+        if self.outbox_retry_base_seconds > self.outbox_retry_max_seconds:
+            raise ValueError(
+                "OUTBOX_RETRY_BASE_SECONDS must not exceed OUTBOX_RETRY_MAX_SECONDS"
+            )
         if self.llm_provider == "openai":
             if not self.llm_api_key or not self.llm_api_key.get_secret_value():
                 raise ValueError("LLM_API_KEY is required when LLM_PROVIDER=openai")
@@ -115,6 +131,7 @@ class Settings(BaseSettings):
                 "JWT_SECRET_KEY": self.jwt_secret_key,
                 "N8N_WEBHOOK_SECRET": self.n8n_webhook_secret,
                 "APPROVAL_TOKEN_SECRET": self.approval_token_secret,
+                "METRICS_TOKEN": self.metrics_token,
             }
             for field_name, secret in secret_fields.items():
                 if secret.get_secret_value() in unsafe_values:

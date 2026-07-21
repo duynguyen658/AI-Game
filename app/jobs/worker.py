@@ -20,12 +20,13 @@ from app.core.exceptions import (
 from app.database.session import AsyncSessionLocal
 from app.jobs.definitions import LeasedJob
 from app.jobs.queue import JobQueue
+from app.jobs.retry import classify_job_error
 from app.observability.context import operation_context
-from app.observability.metrics import JOB_DURATION
+from app.observability.metrics import JOB_DURATION, OUTBOX_DISPATCHER_ERRORS
 from app.observability.tracing import traced_operation
 from app.outbox.dispatcher import OutboxDispatcher
 from app.repositories.job_repository import JobRepository
-from app.core.constants import JobType, WorkerStatus
+from app.core.constants import JobErrorClassification, JobType, WorkerStatus
 
 logger = structlog.get_logger()
 
@@ -71,7 +72,15 @@ class JobWorker:
         await self._worker_heartbeat(WorkerStatus.RUNNING)
         try:
             while not self.stop_event.is_set():
-                processed = await self.run_once()
+                try:
+                    processed = await self.run_once()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.exception(
+                        "worker_iteration_failed", worker_id=self.worker_id
+                    )
+                    processed = 0
                 if not processed:
                     try:
                         await asyncio.wait_for(
@@ -84,11 +93,19 @@ class JobWorker:
             await self._worker_heartbeat(WorkerStatus.STOPPED)
 
     async def run_once(self) -> int:
-        await OutboxDispatcher(
-            f"{self.worker_id}:outbox",
-            session_factory=self.session_factory,
-            settings=self.settings,
-        ).dispatch_once(limit=self.settings.job_batch_size)
+        try:
+            await OutboxDispatcher(
+                f"{self.worker_id}:outbox",
+                session_factory=self.session_factory,
+                settings=self.settings,
+            ).dispatch_once(limit=self.settings.outbox_batch_size)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            OUTBOX_DISPATCHER_ERRORS.inc()
+            logger.exception(
+                "outbox_dispatch_iteration_failed", worker_id=self.worker_id
+            )
         async with self.session_factory() as session:
             queue = JobQueue(session, settings=self.settings)
             await queue.reclaim_stale()
@@ -233,4 +250,4 @@ class JobWorker:
 
     @staticmethod
     def _is_retryable(error: Exception) -> bool:
-        return not isinstance(error, (JobPayloadError, ValueError, TypeError))
+        return classify_job_error(error) == JobErrorClassification.RETRYABLE

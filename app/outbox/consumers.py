@@ -69,4 +69,5 @@ async def _enqueue_from_event(
         idempotency_key=key,
         correlation_id=event.correlation_id,
         trace_id=event.trace_id,
+        commit=False,
     )

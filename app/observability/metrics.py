@@ -74,6 +74,12 @@ OUTBOX_PENDING = Gauge("outbox_pending", "Pending or failed outbox events")
 OUTBOX_FAILED = Counter(
     "outbox_failed_total", "Outbox consumer failures", ("event_type",)
 )
+OUTBOX_LEASE_LOST = Counter(
+    "outbox_lease_lost_total", "Outbox lease ownership losses", ("event_type",)
+)
+OUTBOX_DISPATCHER_ERRORS = Counter(
+    "outbox_dispatcher_errors_total", "Outbox dispatcher iteration failures"
+)
 OUTBOX_DURATION = Histogram(
     "outbox_processing_duration_seconds",
     "Outbox processing duration",

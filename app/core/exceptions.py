@@ -34,6 +34,14 @@ class LLMProviderError(ApplicationError):
     error_code = "LLM_PROVIDER_ERROR"
 
 
+class LLMProviderUnavailableError(LLMProviderError):
+    error_code = "LLM_PROVIDER_UNAVAILABLE"
+
+
+class LLMRateLimitError(LLMProviderError):
+    error_code = "LLM_RATE_LIMITED"
+
+
 class LLMTimeoutError(ApplicationError):
     error_code = "LLM_TIMEOUT"
 
@@ -238,6 +246,22 @@ class JobCancelledError(ApplicationError):
     error_code = "JOB_CANCELLED"
 
 
+class RetryableJobError(ApplicationError):
+    error_code = "JOB_TRANSIENT_ERROR"
+
+
+class JobNonRetryableError(ApplicationError):
+    error_code = "JOB_NON_RETRYABLE_ERROR"
+
+
+class OutboxLeaseLostError(ApplicationError):
+    error_code = "OUTBOX_LEASE_LOST"
+
+
+class OutboxOwnershipConflictError(ApplicationError):
+    error_code = "OUTBOX_OWNERSHIP_CONFLICT"
+
+
 class AlertNotFoundError(ApplicationError):
     error_code = "ALERT_NOT_FOUND"
 
@@ -250,5 +274,17 @@ class EvaluationConflictError(ApplicationError):
     error_code = "EVALUATION_CONFLICT"
 
 
+class EvaluationExecutionError(ApplicationError):
+    error_code = "EVALUATION_EXECUTION_ERROR"
+
+
+class EvaluationIsolationError(ApplicationError):
+    error_code = "EVALUATION_ISOLATION_ERROR"
+
+
 class RateLimitExceededError(ApplicationError):
     error_code = "RATE_LIMIT_EXCEEDED"
+
+
+class RequestBodyTooLargeError(ApplicationError):
+    error_code = "REQUEST_BODY_TOO_LARGE"
