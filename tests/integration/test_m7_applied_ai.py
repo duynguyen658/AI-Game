@@ -26,10 +26,13 @@ from app.core.constants import (
 )
 from app.core.exceptions import (
     BusinessImpactPersistenceError,
+    FeedbackPersistenceError,
     JobCancelledError,
     M7ConflictError,
     M7ResourceNotFoundError,
+    M7ValidationError,
     MediaAttemptLeaseLostError,
+    MediaPersistenceError,
 )
 from app.database.models import (
     AgentRunModel,
@@ -52,6 +55,8 @@ from app.jobs.worker import JobWorker
 from app.llm.mock_client import MockLLMClient
 from app.llm.registry import ProviderRegistry
 from app.media.service import MediaProcessor, MediaService
+from app.media.definitions import GeneratedImage
+from app.media.storage import LocalMediaStorage
 from app.outbox.service import OutboxService
 from app.prompt_management.service import PromptService
 from app.schemas.business_impact import (
@@ -80,6 +85,7 @@ from app.service.document_processing_service import DocumentProcessingService
 from app.service.provider_comparison_service import ProviderComparisonService
 from app.service.workflow_service import WorkflowService
 from app.repositories.media_repository import MediaRepository
+from app.core.constants import MediaAttemptUpdateResult
 
 pytestmark = [
     pytest.mark.postgres,
@@ -916,6 +922,277 @@ async def test_known_and_unknown_impact_constraints_map_and_session_recovers(
         monkeypatch.setattr(service.impacts, "create_impact", violate_foreign_key)
         with pytest.raises(BusinessImpactPersistenceError):
             await service.record_impact(other_task.task_run_id, data, actor=manager())
+        assert await session.scalar(text("SELECT 1")) == 1
+
+
+@pytest.mark.asyncio
+async def test_media_provider_safety_and_storage_failures_leave_no_started_attempt(
+    tmp_path, monkeypatch
+) -> None:
+    settings = get_settings().model_copy(update={"media_storage_root": str(tmp_path)})
+
+    class MalformedProvider:
+        async def generate(self, _data):
+            return GeneratedImage(
+                content=b"not-an-image",
+                mime_type="image/png",
+                width=1024,
+                height=1024,
+                provider_job_id="malformed-job",
+                estimated_cost=0.1,
+            )
+
+    async with AsyncSessionLocal() as session:
+        unsafe_asset = await MediaService(session, settings=settings).request_image(
+            ImageGenerationRequest(prompt="Malformed provider fixture"), actor=manager()
+        )
+        unsafe_job = (
+            await JobQueue(session, settings=settings).lease(worker_id="safety-worker")
+        )[0]
+
+    monkeypatch.setattr(
+        MediaProcessor, "_image_provider", lambda _self, _provider: MalformedProvider()
+    )
+
+    async def checkpoint() -> None:
+        return None
+
+    with pytest.raises(M7ValidationError):
+        await MediaProcessor(
+            AsyncSessionLocal, settings=settings, llm_client=MockLLMClient()
+        ).generate_image(
+            unsafe_asset.media_asset_id,
+            job=unsafe_job,
+            worker_id="safety-worker",
+            checkpoint=checkpoint,
+        )
+    async with AsyncSessionLocal() as session:
+        unsafe_attempt = await session.scalar(
+            select(MediaGenerationAttemptModel).where(
+                MediaGenerationAttemptModel.media_asset_id
+                == unsafe_asset.media_asset_id
+            )
+        )
+        assert unsafe_attempt is not None
+        assert unsafe_attempt.status == MediaAttemptStatus.FAILED.value
+        assert unsafe_attempt.provider_job_id == "malformed-job"
+
+    monkeypatch.undo()
+    async with AsyncSessionLocal() as session:
+        storage_asset = await MediaService(session, settings=settings).request_image(
+            ImageGenerationRequest(prompt="Storage failure fixture"), actor=manager()
+        )
+        storage_job = (
+            await JobQueue(session, settings=settings).lease(worker_id="storage-worker")
+        )[0]
+    monkeypatch.setattr(
+        LocalMediaStorage,
+        "store",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("storage full")),
+    )
+    with pytest.raises(OSError):
+        await MediaProcessor(
+            AsyncSessionLocal, settings=settings, llm_client=MockLLMClient()
+        ).generate_image(
+            storage_asset.media_asset_id,
+            job=storage_job,
+            worker_id="storage-worker",
+            checkpoint=checkpoint,
+        )
+    async with AsyncSessionLocal() as session:
+        storage_attempt = await session.scalar(
+            select(MediaGenerationAttemptModel).where(
+                MediaGenerationAttemptModel.media_asset_id
+                == storage_asset.media_asset_id
+            )
+        )
+        assert storage_attempt is not None
+        assert storage_attempt.status == MediaAttemptStatus.FAILED.value
+        assert storage_attempt.provider_job_id is not None
+
+    monkeypatch.undo()
+
+    class TimeoutProvider:
+        async def generate(self, _data):
+            raise TimeoutError("provider timeout")
+
+    async with AsyncSessionLocal() as session:
+        timeout_asset = await MediaService(session, settings=settings).request_image(
+            ImageGenerationRequest(prompt="Provider timeout fixture"), actor=manager()
+        )
+        timeout_job = (
+            await JobQueue(session, settings=settings).lease(worker_id="timeout-worker")
+        )[0]
+    monkeypatch.setattr(
+        MediaProcessor, "_image_provider", lambda _self, _provider: TimeoutProvider()
+    )
+    with pytest.raises(TimeoutError):
+        await MediaProcessor(
+            AsyncSessionLocal, settings=settings, llm_client=MockLLMClient()
+        ).generate_image(
+            timeout_asset.media_asset_id,
+            job=timeout_job,
+            worker_id="timeout-worker",
+            checkpoint=checkpoint,
+        )
+    async with AsyncSessionLocal() as session:
+        timeout_attempt = await session.scalar(
+            select(MediaGenerationAttemptModel).where(
+                MediaGenerationAttemptModel.media_asset_id
+                == timeout_asset.media_asset_id
+            )
+        )
+        assert timeout_attempt is not None
+        assert timeout_attempt.status == MediaAttemptStatus.FAILED.value
+
+
+@pytest.mark.asyncio
+async def test_media_attempt_terminalization_races_have_one_winner() -> None:
+    settings = get_settings()
+    async with AsyncSessionLocal() as session:
+        asset = await MediaService(session, settings=settings).request_image(
+            ImageGenerationRequest(prompt="Terminal race fixture"), actor=manager()
+        )
+        job = (await JobQueue(session, settings=settings).lease(worker_id="owner"))[0]
+        attempt = await MediaRepository(session).create_started_attempt(
+            asset_id=asset.media_asset_id,
+            provider="mock",
+            model="mock-image-v1",
+            job_id=job.job_id,
+            worker_id="owner",
+            job_attempt_number=job.attempt_count,
+        )
+        assert attempt is not None
+        attempt_id = attempt.attempt_id
+        await session.commit()
+
+    async def complete():
+        async with AsyncSessionLocal() as session:
+            result = await MediaRepository(session).mark_completed(
+                attempt_id,
+                worker_id="owner",
+                provider_job_id="race-provider-job",
+                estimated_cost=0,
+            )
+            await session.commit()
+            return result
+
+    async def cancel():
+        async with AsyncSessionLocal() as session:
+            result = await MediaRepository(session).mark_cancelled(
+                attempt_id, worker_id="owner"
+            )
+            await session.commit()
+            return result
+
+    results = await asyncio.gather(complete(), cancel())
+    assert results.count(MediaAttemptUpdateResult.UPDATED) == 1
+    assert results.count(MediaAttemptUpdateResult.INVALID_STATE) == 1
+    async with AsyncSessionLocal() as session:
+        terminal = await session.get(MediaGenerationAttemptModel, attempt_id)
+        assert terminal is not None
+        assert terminal.status in {
+            MediaAttemptStatus.COMPLETED.value,
+            MediaAttemptStatus.CANCELLED.value,
+        }
+
+
+@pytest.mark.asyncio
+async def test_concurrent_media_idempotency_returns_one_asset_and_unknown_fk_is_500(
+    monkeypatch,
+) -> None:
+    data = ImageGenerationRequest(prompt="Idempotent media fixture")
+
+    async def request_once():
+        async with AsyncSessionLocal() as session:
+            return await MediaService(session).request_image(
+                data,
+                actor=manager(),
+                idempotency_key="concurrent-media-key",
+            )
+
+    first, second = await asyncio.gather(request_once(), request_once())
+    assert first.media_asset_id == second.media_asset_id
+
+    async with AsyncSessionLocal() as session:
+        assert await session.scalar(text("SELECT COUNT(*) FROM media_assets")) == 1
+        service = MediaService(session)
+        original_create = service.media.create_asset
+
+        async def violate_foreign_key(model):
+            model.campaign_id = "MISSING-CAMPAIGN"
+            return await original_create(model)
+
+        monkeypatch.setattr(service.media, "create_asset", violate_foreign_key)
+        with pytest.raises(MediaPersistenceError):
+            await service.request_image(
+                ImageGenerationRequest(prompt="Unknown media constraint fixture"),
+                actor=manager(),
+                idempotency_key="unknown-media-key",
+            )
+        assert await session.scalar(text("SELECT 1")) == 1
+
+
+@pytest.mark.asyncio
+async def test_concurrent_feedback_has_one_winner_and_unknown_fk_recovers(
+    monkeypatch,
+) -> None:
+    async with AsyncSessionLocal() as session:
+        task = AppliedWorkflowTaskModel(
+            workflow_type="DATA_ANALYSIS",
+            status=AppliedTaskStatus.COMPLETED.value,
+            input_metadata={},
+            provider="mock",
+            model="mock-applied-ai",
+            duration_ms=1,
+            created_by="feedback-user",
+            completed_at=datetime.now(UTC),
+        )
+        session.add(task)
+        await session.commit()
+        task_id = task.task_run_id
+    feedback = UserFeedbackCreate(
+        rating=4,
+        helpfulness=4,
+        accuracy=4,
+        ease_of_use=4,
+        output_accepted=True,
+        accepted_without_editing=True,
+        editing_minutes=Decimal("0"),
+        rework_count=0,
+        would_use_again=True,
+    )
+    actor = AuthenticatedActor(actor_id="feedback-user", role=UserRole.MARKETING)
+
+    async def submit_feedback():
+        async with AsyncSessionLocal() as session:
+            try:
+                return await BusinessImpactService(session).record_feedback(
+                    task_id, feedback, actor=actor
+                )
+            except M7ConflictError as exc:
+                return exc
+
+    outcomes = await asyncio.gather(submit_feedback(), submit_feedback())
+    assert sum(not isinstance(item, Exception) for item in outcomes) == 1
+    assert sum(isinstance(item, M7ConflictError) for item in outcomes) == 1
+
+    async with AsyncSessionLocal() as session:
+        service = BusinessImpactService(session)
+        original_create = service.feedback.create
+
+        async def violate_foreign_key(model):
+            model.task_run_id = uuid4()
+            model.actor_id = "other-feedback-user"
+            return await original_create(model)
+
+        monkeypatch.setattr(service.feedback, "create", violate_foreign_key)
+        with pytest.raises(FeedbackPersistenceError):
+            await service.record_feedback(
+                task_id,
+                feedback,
+                actor=manager(),
+            )
         assert await session.scalar(text("SELECT 1")) == 1
 
 
