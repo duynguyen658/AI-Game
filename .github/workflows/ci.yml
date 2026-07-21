@@ -6,6 +6,7 @@ on:
       - feature/repository-layer
       - agentic-core
       - feature/m5-policy-memory-actions
+      - feature/m6-production-operations
   pull_request:
     branches:
       - main
@@ -45,7 +46,7 @@ jobs:
           python-version: "3.13"
 
       - name: Install dependencies
-        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+        run: python -m pip install --upgrade pip && pip install -r requirements-dev.txt
 
       - name: Run migrations
         run: alembic upgrade head
@@ -70,3 +71,60 @@ jobs:
 
       - name: Coverage
         run: python -m pytest --cov=app --cov-report=term-missing
+
+      - name: Evaluation regression gate
+        run: python -m pytest tests/unit/evaluation -v
+
+      - name: API and worker smoke
+        run: python -c "from app.main import app; from app.jobs.handlers import build_job_handlers; from app.database.session import AsyncSessionLocal; assert app and build_job_handlers(AsyncSessionLocal)"
+
+      - name: Dependency vulnerability scan
+        run: python -m pip install pip-audit && python -m pip_audit -r requirements.txt
+
+      - name: Generate Python SBOM
+        run: python -m pip_audit -r requirements.txt --format cyclonedx-json --output sbom-python.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom-python
+          path: sbom-python.json
+
+  images:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build API image
+        run: docker build -f Dockerfile.api -t cyber-legends-api:${{ github.sha }} .
+
+      - name: Build worker image
+        run: docker build -f Dockerfile.worker -t cyber-legends-worker:${{ github.sha }} .
+
+      - name: Smoke API image
+        run: docker run --rm cyber-legends-api:${{ github.sha }} python -c "from app.main import app; assert app"
+
+      - name: Smoke worker image
+        run: docker run --rm cyber-legends-worker:${{ github.sha }} python -c "from app.jobs.handlers import build_job_handlers; from app.database.session import AsyncSessionLocal; assert len(build_job_handlers(AsyncSessionLocal)) == 6"
+
+      - name: Scan API image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: cyber-legends-api:${{ github.sha }}
+          format: table
+          exit-code: "1"
+          severity: CRITICAL,HIGH
+
+      - name: Scan worker image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: cyber-legends-worker:${{ github.sha }}
+          format: table
+          exit-code: "1"
+          severity: CRITICAL,HIGH
+
+      - name: Generate container SBOM
+        uses: anchore/sbom-action@v0.17.2
+        with:
+          image: cyber-legends-api:${{ github.sha }}
+          artifact-name: sbom-api.spdx.json
