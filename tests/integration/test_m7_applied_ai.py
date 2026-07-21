@@ -18,17 +18,27 @@ from app.core.config import get_settings
 from app.core.constants import (
     AppliedTaskStatus,
     MediaAssetStatus,
+    MediaAttemptStatus,
+    OutboxEventType,
     ProviderName,
     PromptVersionStatus,
     UserRole,
 )
-from app.core.exceptions import M7ConflictError, M7ResourceNotFoundError
+from app.core.exceptions import (
+    BusinessImpactPersistenceError,
+    JobCancelledError,
+    M7ConflictError,
+    M7ResourceNotFoundError,
+    MediaAttemptLeaseLostError,
+)
 from app.database.models import (
     AgentRunModel,
     AppliedWorkflowTaskModel,
+    BackgroundJobModel,
     EvaluationCaseModel,
     EvaluationDatasetModel,
     MediaGenerationAttemptModel,
+    OutboxEventModel,
     PromptVersionModel,
     PromptTemplateModel,
 )
@@ -36,10 +46,13 @@ from app.database.session import AsyncSessionLocal
 from app.integrations.n8n.service import N8NService
 from app.integrations.n8n.signatures import sign_webhook
 from app.jobs.handlers import build_job_handlers
+from app.jobs.lifecycle import JobTerminalReconciler
+from app.jobs.queue import JobQueue
 from app.jobs.worker import JobWorker
 from app.llm.mock_client import MockLLMClient
 from app.llm.registry import ProviderRegistry
-from app.media.service import MediaService
+from app.media.service import MediaProcessor, MediaService
+from app.outbox.service import OutboxService
 from app.prompt_management.service import PromptService
 from app.schemas.business_impact import (
     TaskBaselineCreate,
@@ -66,6 +79,7 @@ from app.service.data_analysis_service import DataAnalysisService
 from app.service.document_processing_service import DocumentProcessingService
 from app.service.provider_comparison_service import ProviderComparisonService
 from app.service.workflow_service import WorkflowService
+from app.repositories.media_repository import MediaRepository
 
 pytestmark = [
     pytest.mark.postgres,
@@ -363,6 +377,7 @@ async def test_business_impact_feedback_and_analytics() -> None:
                 department="marketing",
                 steps_before=12,
                 automated_steps=8,
+                output_accepted=True,
                 accepted_without_editing=True,
                 editing_minutes=Decimal("0"),
                 rework_count=0,
@@ -378,6 +393,7 @@ async def test_business_impact_feedback_and_analytics() -> None:
                 helpfulness=5,
                 accuracy=4,
                 ease_of_use=5,
+                output_accepted=True,
                 accepted_without_editing=True,
                 editing_minutes=Decimal("0"),
                 rework_count=0,
@@ -553,6 +569,354 @@ async def test_media_provider_failure_audits_attempt_and_closes_task(tmp_path) -
         assert attempts[0].attempt_number == 1
         assert attempts[0].status == "FAILED"
         assert attempts[0].completed_at is not None
+
+
+@pytest.mark.asyncio
+async def test_media_finalization_failure_terminalizes_attempt_and_rolls_back_ready_event(
+    tmp_path, monkeypatch
+) -> None:
+    settings = get_settings().model_copy(
+        update={"media_storage_root": str(tmp_path), "job_max_attempts": 1}
+    )
+    original_add_event = OutboxService.add_event
+
+    async def fail_ready_event(self, *, event_type, **kwargs):
+        if event_type == OutboxEventType.MEDIA_READY_FOR_REVIEW:
+            raise RuntimeError("injected final persistence failure")
+        return await original_add_event(self, event_type=event_type, **kwargs)
+
+    monkeypatch.setattr(OutboxService, "add_event", fail_ready_event)
+    async with AsyncSessionLocal() as session:
+        asset = await MediaService(session, settings=settings).request_image(
+            ImageGenerationRequest(prompt="Finalization failure fixture"),
+            actor=manager(),
+        )
+        assert asset.task_run_id is not None
+    worker = JobWorker(
+        "m7-finalization-worker",
+        build_job_handlers(
+            AsyncSessionLocal,
+            settings=settings,
+            llm_client_factory=MockLLMClient,
+        ),
+        settings=settings,
+    )
+    assert await worker.run_once() == 1
+    async with AsyncSessionLocal() as session:
+        attempt = await session.scalar(
+            select(MediaGenerationAttemptModel).where(
+                MediaGenerationAttemptModel.media_asset_id == asset.media_asset_id
+            )
+        )
+        failed_asset = await MediaService(session, settings=settings).get(
+            asset.media_asset_id
+        )
+        failed_task = await AppliedWorkflowService(session).get(asset.task_run_id)
+        ready_events = await session.scalars(
+            select(OutboxEventModel).where(
+                OutboxEventModel.event_type
+                == OutboxEventType.MEDIA_READY_FOR_REVIEW.value
+            )
+        )
+        assert attempt is not None
+        assert attempt.status == MediaAttemptStatus.FAILED.value
+        assert failed_asset.status == MediaAssetStatus.FAILED
+        assert failed_task.status == AppliedTaskStatus.FAILED
+        assert list(ready_events) == []
+
+
+@pytest.mark.asyncio
+async def test_media_cancellation_after_provider_success_is_reconciled(
+    tmp_path,
+) -> None:
+    settings = get_settings().model_copy(update={"media_storage_root": str(tmp_path)})
+    async with AsyncSessionLocal() as session:
+        asset = await MediaService(session, settings=settings).request_image(
+            ImageGenerationRequest(prompt="Cancellation fixture"), actor=manager()
+        )
+        leased = await JobQueue(session, settings=settings).lease(
+            worker_id="m7-cancel-worker"
+        )
+        job = leased[0]
+
+    async def cancel_after_provider() -> None:
+        raise JobCancelledError("Cancellation requested after provider success")
+
+    processor = MediaProcessor(
+        AsyncSessionLocal, settings=settings, llm_client=MockLLMClient()
+    )
+    with pytest.raises(JobCancelledError):
+        await processor.generate_image(
+            asset.media_asset_id,
+            job=job,
+            worker_id="m7-cancel-worker",
+            checkpoint=cancel_after_provider,
+        )
+    async with AsyncSessionLocal() as session:
+        await JobQueue(session, settings=settings).mark_cancelled(
+            job.job_id, worker_id="m7-cancel-worker"
+        )
+        await JobTerminalReconciler(session).reconcile(
+            job,
+            cancelled=True,
+            error_code="JOB_CANCELLED",
+            error_message="Background job was cancelled",
+        )
+        attempt = await session.scalar(
+            select(MediaGenerationAttemptModel).where(
+                MediaGenerationAttemptModel.media_asset_id == asset.media_asset_id
+            )
+        )
+        cancelled_asset = await MediaService(session, settings=settings).get(
+            asset.media_asset_id
+        )
+        assert attempt is not None
+        assert attempt.status == MediaAttemptStatus.CANCELLED.value
+        assert cancelled_asset.status == MediaAssetStatus.CANCELLED
+
+
+@pytest.mark.asyncio
+async def test_stale_media_worker_cannot_finalize_success(tmp_path) -> None:
+    settings = get_settings().model_copy(update={"media_storage_root": str(tmp_path)})
+    async with AsyncSessionLocal() as session:
+        asset = await MediaService(session, settings=settings).request_image(
+            ImageGenerationRequest(prompt="Lease loss fixture"), actor=manager()
+        )
+        job = (await JobQueue(session, settings=settings).lease(worker_id="worker-a"))[
+            0
+        ]
+        model = await session.get(BackgroundJobModel, job.job_id)
+        assert model is not None
+        model.locked_by = "worker-b"
+        await session.commit()
+
+    async def checkpoint() -> None:
+        return None
+
+    with pytest.raises(MediaAttemptLeaseLostError):
+        await MediaProcessor(
+            AsyncSessionLocal, settings=settings, llm_client=MockLLMClient()
+        ).generate_image(
+            asset.media_asset_id,
+            job=job,
+            worker_id="worker-a",
+            checkpoint=checkpoint,
+        )
+    async with AsyncSessionLocal() as session:
+        attempt = await session.scalar(
+            select(MediaGenerationAttemptModel).where(
+                MediaGenerationAttemptModel.media_asset_id == asset.media_asset_id
+            )
+        )
+        ready_event = await session.scalar(
+            select(OutboxEventModel).where(
+                OutboxEventModel.event_type
+                == OutboxEventType.MEDIA_READY_FOR_REVIEW.value
+            )
+        )
+        assert attempt is not None
+        assert attempt.status == MediaAttemptStatus.FAILED.value
+        assert ready_event is None
+
+
+@pytest.mark.asyncio
+async def test_attempt_numbers_are_unique_under_concurrent_allocation() -> None:
+    settings = get_settings()
+    async with AsyncSessionLocal() as session:
+        asset = await MediaService(session, settings=settings).request_image(
+            ImageGenerationRequest(prompt="Concurrent attempt fixture"), actor=manager()
+        )
+        job = (await JobQueue(session, settings=settings).lease(worker_id="owner"))[0]
+
+    async def allocate(worker_id: str, job_attempt_number: int) -> int:
+        async with AsyncSessionLocal() as session:
+            attempt = await MediaRepository(session).create_started_attempt(
+                asset_id=asset.media_asset_id,
+                provider="mock",
+                model="mock-image-v1",
+                job_id=job.job_id,
+                worker_id=worker_id,
+                job_attempt_number=job_attempt_number,
+            )
+            assert attempt is not None
+            await session.commit()
+            return attempt.attempt_number
+
+    numbers = await asyncio.gather(allocate("worker-1", 1), allocate("worker-2", 2))
+    assert sorted(numbers) == [1, 2]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("cancelled", "expected_status"),
+    [(False, MediaAttemptStatus.FAILED), (True, MediaAttemptStatus.CANCELLED)],
+)
+async def test_terminal_job_reconciles_active_media_attempt(
+    cancelled: bool, expected_status: MediaAttemptStatus
+) -> None:
+    settings = get_settings()
+    async with AsyncSessionLocal() as session:
+        asset = await MediaService(session, settings=settings).request_image(
+            ImageGenerationRequest(prompt="Reconciliation fixture"), actor=manager()
+        )
+        job = (await JobQueue(session, settings=settings).lease(worker_id="owner"))[0]
+        attempt = await MediaRepository(session).create_started_attempt(
+            asset_id=asset.media_asset_id,
+            provider="mock",
+            model="mock-image-v1",
+            job_id=job.job_id,
+            worker_id="owner",
+            job_attempt_number=job.attempt_count,
+        )
+        assert attempt is not None
+        await session.commit()
+        await JobTerminalReconciler(session).reconcile(
+            job,
+            cancelled=cancelled,
+            error_code="TERMINAL_TEST",
+            error_message="Terminal reconciliation fixture",
+        )
+        await session.refresh(attempt)
+        assert attempt.status == expected_status.value
+        assert attempt.completed_at is not None
+
+
+@pytest.mark.asyncio
+async def test_unknown_acceptance_is_excluded_until_feedback_records_decision() -> None:
+    async with AsyncSessionLocal() as session:
+        task = AppliedWorkflowTaskModel(
+            workflow_type="DATA_ANALYSIS",
+            status=AppliedTaskStatus.COMPLETED.value,
+            input_metadata={},
+            provider="mock",
+            model="mock-applied-ai",
+            duration_ms=1,
+            created_by="internal-user",
+            completed_at=datetime.now(UTC),
+        )
+        session.add(task)
+        await session.commit()
+        service = BusinessImpactService(session)
+        await service.create_baseline(
+            TaskBaselineCreate(
+                task_type="data_analysis",
+                department="marketing",
+                manual_duration_minutes=Decimal("10"),
+                manual_steps=2,
+                historical_error_rate=Decimal("0"),
+                baseline_cost=Decimal("0"),
+                sample_size=1,
+                source="acceptance fixture",
+            ),
+            actor_id="m7-manager",
+        )
+        impact = await service.record_impact(
+            task.task_run_id,
+            TaskImpactCreate(
+                department="marketing",
+                steps_before=2,
+                automated_steps=1,
+                editing_minutes=Decimal("0"),
+                rework_count=0,
+                error_count=0,
+            ),
+            actor=manager(),
+        )
+        assert impact.task_completed_successfully is True
+        assert impact.output_accepted is None
+        before = await service.analytics(task_type="data_analysis")
+        assert before.technical_success_rate == Decimal("1.000000")
+        assert before.human_acceptance_rate == Decimal("0.000000")
+        await service.record_feedback(
+            task.task_run_id,
+            UserFeedbackCreate(
+                rating=3,
+                helpfulness=3,
+                accuracy=3,
+                ease_of_use=3,
+                output_accepted=True,
+                accepted_without_editing=False,
+                editing_minutes=Decimal("5"),
+                rework_count=1,
+                would_use_again=False,
+            ),
+            actor=AuthenticatedActor(actor_id="internal-user", role=UserRole.MARKETING),
+        )
+        updated = await service.impacts.get_impact_by_task(task.task_run_id)
+        assert updated is not None
+        assert updated.output_accepted is True
+        after = await service.analytics(task_type="data_analysis")
+        assert after.human_acceptance_rate == Decimal("1.000000")
+
+
+@pytest.mark.asyncio
+async def test_known_and_unknown_impact_constraints_map_and_session_recovers(
+    monkeypatch,
+) -> None:
+    async with AsyncSessionLocal() as session:
+        task = AppliedWorkflowTaskModel(
+            workflow_type="DATA_ANALYSIS",
+            status=AppliedTaskStatus.COMPLETED.value,
+            input_metadata={},
+            provider="mock",
+            model="mock-applied-ai",
+            duration_ms=1,
+            created_by="m7-manager",
+            completed_at=datetime.now(UTC),
+        )
+        session.add(task)
+        await session.commit()
+        service = BusinessImpactService(session)
+        await service.create_baseline(
+            TaskBaselineCreate(
+                task_type="data_analysis",
+                department="marketing",
+                manual_duration_minutes=Decimal("10"),
+                manual_steps=2,
+                historical_error_rate=Decimal("0"),
+                baseline_cost=Decimal("0"),
+                sample_size=1,
+                source="constraint fixture",
+            ),
+            actor_id="m7-manager",
+        )
+        data = TaskImpactCreate(
+            department="marketing",
+            steps_before=2,
+            automated_steps=1,
+            editing_minutes=Decimal("0"),
+            rework_count=0,
+            error_count=0,
+        )
+        await service.record_impact(task.task_run_id, data, actor=manager())
+        with pytest.raises(M7ConflictError):
+            await service.record_impact(task.task_run_id, data, actor=manager())
+        assert await session.scalar(text("SELECT 1")) == 1
+
+    async with AsyncSessionLocal() as session:
+        other_task = AppliedWorkflowTaskModel(
+            workflow_type="DATA_ANALYSIS",
+            status=AppliedTaskStatus.COMPLETED.value,
+            input_metadata={},
+            provider="mock",
+            model="mock-applied-ai",
+            duration_ms=1,
+            created_by="m7-manager",
+            completed_at=datetime.now(UTC),
+        )
+        session.add(other_task)
+        await session.commit()
+        service = BusinessImpactService(session)
+        original_create = service.impacts.create_impact
+
+        async def violate_foreign_key(model):
+            model.task_run_id = uuid4()
+            return await original_create(model)
+
+        monkeypatch.setattr(service.impacts, "create_impact", violate_foreign_key)
+        with pytest.raises(BusinessImpactPersistenceError):
+            await service.record_impact(other_task.task_run_id, data, actor=manager())
+        assert await session.scalar(text("SELECT 1")) == 1
 
 
 @pytest.mark.asyncio
