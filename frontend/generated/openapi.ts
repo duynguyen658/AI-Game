@@ -108,6 +108,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/workflows": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Workflows */
+        get: operations["list_workflows_workflows_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/workflows/{workflow_id}": {
         parameters: {
             query?: never;
@@ -1185,6 +1202,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/integrations/n8n/deliveries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List N8N Deliveries */
+        get: operations["list_n8n_deliveries_integrations_n8n_deliveries_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/integrations/n8n/campaigns": {
         parameters: {
             query?: never;
@@ -1247,6 +1281,40 @@ export interface paths {
         put?: never;
         /** Create Image */
         post: operations["create_image_media_images_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/media/assets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Media Assets */
+        get: operations["list_media_assets_media_assets_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/media/storyboards": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Storyboards */
+        get: operations["list_storyboards_media_storyboards_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1362,7 +1430,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** List Data Analysis Tasks */
+        get: operations["list_data_analysis_tasks_data_analysis_tasks_get"];
         put?: never;
         /** Create Data Analysis Task */
         post: operations["create_data_analysis_task_data_analysis_tasks_post"];
@@ -1413,7 +1482,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** List Document Processing Tasks */
+        get: operations["list_document_processing_tasks_document_processing_tasks_get"];
         put?: never;
         /** Create Document Processing Task */
         post: operations["create_document_processing_task_document_processing_tasks_post"];
@@ -1483,6 +1553,23 @@ export interface paths {
         };
         /** Get Applied Workflow */
         get: operations["get_applied_workflow_applied_workflows__workflow_type__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/applied-workflow-tasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Applied Tasks */
+        get: operations["list_applied_tasks_applied_workflow_tasks_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2731,6 +2818,31 @@ export interface components {
          * @enum {string}
          */
         MemoryType: "EPISODIC" | "OPERATIONAL";
+        /** N8NDeliveryRead */
+        N8NDeliveryRead: {
+            /**
+             * Receipt Id
+             * Format: uuid
+             */
+            receipt_id: string;
+            /** Endpoint */
+            endpoint: string;
+            /** Correlation Id */
+            correlation_id: string;
+            /** Response Status */
+            response_status: number;
+            /** Resource Type */
+            resource_type?: string | null;
+            /** Resource Id */
+            resource_id?: string | null;
+            /** Job Id */
+            job_id?: string | null;
+            /**
+             * Received At
+             * Format: date-time
+             */
+            received_at: string;
+        };
         /** N8NWebhookResponse */
         N8NWebhookResponse: {
             /** Accepted */
@@ -3805,7 +3917,10 @@ export interface operations {
                 offset?: number;
                 status?: components["schemas"]["CampaignStatus"] | null;
             };
-            header?: never;
+            header?: {
+                "x-actor-id"?: string | null;
+                "x-actor-role"?: string | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -3834,7 +3949,10 @@ export interface operations {
     create_campaign_campaigns_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "x-actor-id"?: string | null;
+                "x-actor-role"?: string | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -3867,7 +3985,10 @@ export interface operations {
     get_campaign_campaigns__campaign_id__get: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "x-actor-id"?: string | null;
+                "x-actor-role"?: string | null;
+            };
             path: {
                 campaign_id: string;
             };
@@ -3898,7 +4019,10 @@ export interface operations {
     update_campaign_campaigns__campaign_id__put: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "x-actor-id"?: string | null;
+                "x-actor-role"?: string | null;
+            };
             path: {
                 campaign_id: string;
             };
@@ -3933,7 +4057,10 @@ export interface operations {
     create_workflow_workflows_campaigns__campaign_id__post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "x-actor-id"?: string | null;
+                "x-actor-role"?: string | null;
+            };
             path: {
                 campaign_id: string;
             };
@@ -3961,10 +4088,49 @@ export interface operations {
             };
         };
     };
+    list_workflows_workflows_get: {
+        parameters: {
+            query?: {
+                campaign_id?: string | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: {
+                "x-actor-id"?: string | null;
+                "x-actor-role"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowRun"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_workflow_workflows__workflow_id__get: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "x-actor-id"?: string | null;
+                "x-actor-role"?: string | null;
+            };
             path: {
                 workflow_id: string;
             };
@@ -3995,7 +4161,10 @@ export interface operations {
     run_workflow_workflows__workflow_id__run_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "x-actor-id"?: string | null;
+                "x-actor-role"?: string | null;
+            };
             path: {
                 workflow_id: string;
             };
@@ -6430,6 +6599,42 @@ export interface operations {
             };
         };
     };
+    list_n8n_deliveries_integrations_n8n_deliveries_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+                endpoint?: string | null;
+            };
+            header?: {
+                "x-actor-id"?: string | null;
+                "x-actor-role"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["N8NDeliveryRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     n8n_campaign_webhook_integrations_n8n_campaigns_post: {
         parameters: {
             query?: never;
@@ -6556,6 +6761,79 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MediaAssetRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_media_assets_media_assets_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+                status_filter?: components["schemas"]["MediaAssetStatus"] | null;
+                campaign_id?: string | null;
+            };
+            header?: {
+                "x-actor-id"?: string | null;
+                "x-actor-role"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MediaAssetRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_storyboards_media_storyboards_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+                status_filter?: components["schemas"]["MediaAssetStatus"] | null;
+            };
+            header?: {
+                "x-actor-id"?: string | null;
+                "x-actor-role"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MediaAssetRead"][];
                 };
             };
             /** @description Validation Error */
@@ -6781,6 +7059,42 @@ export interface operations {
             };
         };
     };
+    list_data_analysis_tasks_data_analysis_tasks_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+                status_filter?: components["schemas"]["AppliedTaskStatus"] | null;
+            };
+            header?: {
+                "x-actor-id"?: string | null;
+                "x-actor-role"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppliedTaskRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     create_data_analysis_task_data_analysis_tasks_post: {
         parameters: {
             query?: never;
@@ -6872,6 +7186,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DataAnalysisReport"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_document_processing_tasks_document_processing_tasks_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+                status_filter?: components["schemas"]["AppliedTaskStatus"] | null;
+            };
+            header?: {
+                "x-actor-id"?: string | null;
+                "x-actor-role"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppliedTaskRead"][];
                 };
             };
             /** @description Validation Error */
@@ -7042,6 +7392,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AppliedWorkflowDefinition"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_applied_tasks_applied_workflow_tasks_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+                workflow_type?: components["schemas"]["AppliedWorkflowType"] | null;
+                status?: components["schemas"]["AppliedTaskStatus"] | null;
+            };
+            header?: {
+                "x-actor-id"?: string | null;
+                "x-actor-role"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppliedTaskRead"][];
                 };
             };
             /** @description Validation Error */

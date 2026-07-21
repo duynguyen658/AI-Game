@@ -8,6 +8,10 @@ export type StoryboardRequest = components["schemas"]["VideoStoryboardRequest"];
 export type Storyboard = components["schemas"]["VideoStoryboard"];
 
 export const mediaApi = {
+  listAssets: (signal?: AbortSignal) =>
+    apiRequest<MediaAsset[]>("/media/assets?limit=100", { signal }),
+  listStoryboards: (signal?: AbortSignal) =>
+    apiRequest<MediaAsset[]>("/media/storyboards?limit=100", { signal }),
   createImage: (payload: ImageRequest) =>
     apiRequest<MediaAsset>("/media/images", {
       method: "POST",

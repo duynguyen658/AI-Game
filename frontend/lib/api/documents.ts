@@ -5,6 +5,8 @@ import type { AppliedTask } from "./data-analysis";
 export type DocumentResult = components["schemas"]["DocumentProcessingResult"];
 
 export const documentsApi = {
+  list: (signal?: AbortSignal) =>
+    apiRequest<AppliedTask[]>("/document-processing/tasks?limit=100", { signal }),
   create: (file: File) => {
     const body = new FormData();
     body.set("file", file);

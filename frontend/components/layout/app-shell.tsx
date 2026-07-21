@@ -86,7 +86,7 @@ function Navigation({ user, onNavigate }: { user: SessionUser; onNavigate?: () =
         if (!items.length) return null;
         return (
           <div className="mb-5" key={group.label}>
-            <p className="mb-1 px-2 text-[11px] font-semibold uppercase text-white/45">
+            <p className="mb-1 px-2 text-[11px] font-semibold uppercase text-white/60">
               {group.label}
             </p>
             <div className="space-y-0.5">
@@ -119,10 +119,10 @@ function Navigation({ user, onNavigate }: { user: SessionUser; onNavigate?: () =
 function Brand() {
   return (
     <Link href="/dashboard" className="flex min-h-16 items-center gap-3 border-b border-white/10 px-5 text-white">
-      <span className="grid size-8 place-items-center rounded-md bg-[#0f8d99] font-mono text-sm font-bold">CL</span>
+      <span className="grid size-8 place-items-center rounded-md bg-[#08717b] font-mono text-sm font-bold">CL</span>
       <span className="min-w-0">
         <span className="block truncate text-sm font-semibold">Cyber Legends</span>
-        <span className="block truncate text-xs text-white/48">AI Operations</span>
+        <span className="block truncate text-xs text-white/60">AI Operations</span>
       </span>
     </Link>
   );
@@ -149,7 +149,7 @@ export function AppShell({ user, children }: { user: SessionUser; children: Reac
         <div className="border-t border-white/10 p-3">
           <div className="mb-2 px-2">
             <p className="truncate text-sm font-medium text-white">{user.displayName}</p>
-            <p className="text-xs text-white/48">{roleLabels[user.role]}</p>
+            <p className="text-xs text-white/60">{roleLabels[user.role]}</p>
           </div>
           <Button onClick={logout} variant="ghost" className="w-full justify-start text-white/72 hover:bg-white/8 hover:text-white">
             <LogOut aria-hidden="true" className="size-4" /> Log out
