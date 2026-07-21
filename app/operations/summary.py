@@ -36,6 +36,7 @@ async def operations_summary(session: AsyncSession) -> OperationsSummary:
         or 0
     )
     summary = OperationsSummary(
+        application_version=settings.application_version,
         jobs=await _status_counts(session, BackgroundJobModel.status),
         alerts=await _status_counts(session, OperationalAlertModel.status),
         workflows=await _status_counts(session, WorkflowRunModel.status),

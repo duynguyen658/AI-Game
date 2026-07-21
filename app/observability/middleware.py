@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from builtins import BaseExceptionGroup
 import time
 from uuid import UUID, uuid4
 
@@ -9,6 +10,7 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.responses import JSONResponse, Response
 
 from app.core.config import Settings
+from app.core.exceptions import RequestBodyTooLargeError
 from app.observability.context import bind_context, clear_context, reset_context
 from app.observability.metrics import HTTP_DURATION, HTTP_ERRORS, HTTP_REQUESTS
 from app.observability.tracing import current_trace_id, traced_operation
@@ -42,16 +44,6 @@ class OperationalMiddleware(BaseHTTPMiddleware):
     async def _dispatch_with_context(
         self, request: Request, call_next: RequestResponseEndpoint
     ) -> Response:
-        content_length = request.headers.get("content-length")
-        if content_length:
-            try:
-                too_large = int(content_length) > self.settings.max_request_body_bytes
-            except ValueError:
-                too_large = True
-            if too_large:
-                return JSONResponse(
-                    {"detail": "Request body is too large"}, status_code=413
-                )
         started = time.perf_counter()
         correlation_id = valid_or_new_correlation_id(
             request.headers.get("x-correlation-id")
@@ -72,7 +64,28 @@ class OperationalMiddleware(BaseHTTPMiddleware):
         )
         response: Response | None = None
         try:
-            response = await call_next(request)
+            if self._header_exceeds_limit(request):
+                response = self._too_large_response()
+            else:
+                original_receive = request._receive
+                received_bytes = 0
+
+                async def limited_receive():
+                    nonlocal received_bytes
+                    message = await original_receive()
+                    if message["type"] == "http.request":
+                        received_bytes += len(message.get("body", b""))
+                        if received_bytes > self.settings.max_request_body_bytes:
+                            raise RequestBodyTooLargeError("Request body is too large")
+                    return message
+
+                request._receive = limited_receive
+                try:
+                    response = await call_next(request)
+                except BaseException as error:
+                    if not _contains_body_too_large(error):
+                        raise
+                    response = self._too_large_response()
             return response
         except Exception:
             HTTP_ERRORS.labels(request.method, "unmatched", "500").inc()
@@ -108,3 +121,34 @@ class OperationalMiddleware(BaseHTTPMiddleware):
             )
             structlog.contextvars.clear_contextvars()
             reset_context(token)
+
+    def _header_exceeds_limit(self, request: Request) -> bool:
+        content_length = request.headers.get("content-length")
+        if content_length is None:
+            return False
+        try:
+            parsed_length = int(content_length)
+            return (
+                parsed_length < 0
+                or parsed_length > self.settings.max_request_body_bytes
+            )
+        except ValueError:
+            return True
+
+    @staticmethod
+    def _too_large_response() -> JSONResponse:
+        return JSONResponse(
+            {
+                "detail": "Request body is too large",
+                "error_code": RequestBodyTooLargeError.error_code,
+            },
+            status_code=413,
+        )
+
+
+def _contains_body_too_large(error: BaseException) -> bool:
+    if isinstance(error, RequestBodyTooLargeError):
+        return True
+    if isinstance(error, BaseExceptionGroup):
+        return any(_contains_body_too_large(item) for item in error.exceptions)
+    return False

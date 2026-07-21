@@ -1,8 +1,9 @@
 from contextlib import asynccontextmanager
+import secrets
 from typing import AsyncIterator
 
 import structlog
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, Header, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
@@ -45,7 +46,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title=settings.app_name,
     debug=settings.app_debug,
-    version="0.1.0",
+    version=settings.application_version,
     lifespan=lifespan,
 )
 
@@ -87,5 +88,14 @@ async def root() -> dict[str, str]:
 
 
 @app.get("/metrics", include_in_schema=False)
-async def metrics() -> Response:
+async def protected_metrics(
+    authorization: str | None = Header(default=None),
+) -> Response:
+    expected = f"Bearer {settings.metrics_token.get_secret_value()}"
+    if authorization is None or not secrets.compare_digest(authorization, expected):
+        raise HTTPException(
+            status_code=401,
+            detail="Monitoring authentication is required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)

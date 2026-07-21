@@ -8,6 +8,7 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 
+from app.core.config import get_settings
 from app.core.constants import AlertType, SecuritySeverity
 from app.database.session import AsyncSessionLocal
 from app.operations.alerts import AlertService
@@ -57,11 +58,21 @@ async def test_health_metrics_operator_authorization_and_lifecycles(
     correlation_id = "6a6e1b0d-596f-49e8-8381-72fb1e036adb"
     live = await api_client.get("/live", headers={"x-correlation-id": correlation_id})
     assert live.status_code == 200
+    assert live.json()["version"] == "1.0.0-rc.1"
     assert live.headers["x-correlation-id"] == correlation_id
     assert live.headers["x-content-type-options"] == "nosniff"
     assert (await api_client.get("/health")).status_code == 200
     assert (await api_client.get("/ready")).status_code == 200
     metrics = await api_client.get("/metrics")
+    assert metrics.status_code == 401
+    metrics = await api_client.get(
+        "/metrics",
+        headers={
+            "Authorization": (
+                f"Bearer {get_settings().metrics_token.get_secret_value()}"
+            )
+        },
+    )
     assert metrics.status_code == 200
     assert "http_requests_total" in metrics.text
 
@@ -118,6 +129,7 @@ async def test_health_metrics_operator_authorization_and_lifecycles(
 
     summary = await api_client.get("/operations/summary", headers=MANAGER_HEADERS)
     assert summary.status_code == 200
+    assert summary.json()["application_version"] == "1.0.0-rc.1"
     assert summary.json()["jobs"]["CANCELLED"] == 1
     timeline = await api_client.get(
         f"/operations/workflows/{workflow_id}/timeline", headers=MANAGER_HEADERS
@@ -157,7 +169,10 @@ async def test_health_metrics_operator_authorization_and_lifecycles(
     evaluation = await api_client.post(
         "/evaluations",
         headers=MANAGER_HEADERS,
-        json={"dataset_id": dataset.json()["dataset_id"]},
+        json={
+            "dataset_id": dataset.json()["dataset_id"],
+            "execution_mode": "SNAPSHOT",
+        },
     )
     assert evaluation.status_code == 202
     assert evaluation.json()["status"] == "PENDING"

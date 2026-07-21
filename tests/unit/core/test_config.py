@@ -41,10 +41,42 @@ def test_production_rejects_unsafe_default_secrets() -> None:
         )
 
 
+def test_production_rejects_default_metrics_token() -> None:
+    with pytest.raises(ValidationError, match="METRICS_TOKEN"):
+        Settings(
+            _env_file=None,
+            app_env="production",
+            database_url="postgresql+asyncpg://user:pass@localhost:5432/app",
+            llm_provider="mock",
+            postgres_password="safe-postgres-password",
+            jwt_secret_key="safe-jwt-secret",
+            n8n_webhook_secret="safe-webhook-secret",
+            approval_token_secret="safe-approval-secret",
+            metrics_token="change-me",
+        )
+
+
 def test_database_url_must_use_async_postgres() -> None:
     with pytest.raises(ValidationError, match="postgresql\\+asyncpg"):
         Settings(
             _env_file=None,
             database_url="sqlite+aiosqlite:///app.db",
             llm_provider="mock",
+        )
+
+
+def test_outbox_heartbeat_and_retry_ranges_must_be_safe() -> None:
+    with pytest.raises(ValidationError, match="OUTBOX_HEARTBEAT_SECONDS"):
+        Settings(
+            _env_file=None,
+            database_url="postgresql+asyncpg://user:pass@localhost:5432/app",
+            outbox_lease_seconds=10,
+            outbox_heartbeat_seconds=10,
+        )
+    with pytest.raises(ValidationError, match="OUTBOX_RETRY_BASE_SECONDS"):
+        Settings(
+            _env_file=None,
+            database_url="postgresql+asyncpg://user:pass@localhost:5432/app",
+            outbox_retry_base_seconds=20,
+            outbox_retry_max_seconds=10,
         )

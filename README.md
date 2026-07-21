@@ -84,7 +84,7 @@ Useful endpoints:
 - `GET /health`
 - `GET /ready`
 - `GET /live`
-- `GET /metrics`
+- `GET /metrics` (monitoring bearer token required)
 - `GET /docs`
 - `POST /campaigns`
 - `POST /workflows/campaigns/{campaign_id}`
@@ -120,15 +120,19 @@ count, so Agent budgets cannot bypass the M3 workflow limit.
 
 ## M6 Production Operations
 
-M6 adds a PostgreSQL queue with `FOR UPDATE SKIP LOCKED`, worker heartbeats, fenced
-leases, bounded exponential retry, dead letters, cancellation checkpoints, and a
-transactional outbox. Workflow/action state and corresponding outbox events commit in
-one transaction. Consumers are idempotent and retain failures for reconciliation.
+M6 implements asynchronous PostgreSQL jobs, worker heartbeats, fenced leases,
+explicit retry classification, dead letters, cancellation checkpoints, a
+transactional outbox, operational alerts, evaluation, operator APIs, observability,
+and deployment hardening. Workflow/action state and corresponding outbox events
+commit in one transaction. Each outbox event has an independent lease, heartbeat,
+and fencing version; consumer side effects commit atomically with the fenced terminal
+update so stale owners cannot commit.
 
 HTTP requests, jobs, and outbox events propagate UUID correlation IDs. Logs are JSON
 and redact credentials, prompts, and authorization data. `/metrics` exposes
-low-cardinality Prometheus metrics; OpenTelemetry spans remain safe no-ops unless an
-SDK/exporter is configured by the deployment. `/ready` checks PostgreSQL, Alembic
+low-cardinality Prometheus metrics only to the configured `METRICS_TOKEN` bearer;
+OpenTelemetry spans remain safe no-ops unless an SDK/exporter is configured by the
+deployment. `/ready` checks PostgreSQL, Alembic
 head, queue access, worker freshness when work is pending, outbox backlog, and LLM
 configuration without calling an LLM.
 
@@ -137,6 +141,8 @@ in-process rate limiter; a multi-replica deployment must replace it with a share
 implementation. Evaluation datasets are immutable by name/version. Runs persist
 deterministic correctness, reliability, behavior, quality, token/cost metrics, and
 explicit regression results with prompt/model/tool/policy/application versions.
+`SYSTEM` evaluation executes the real campaign workflow and Agentic runtime with a
+deterministic mock provider; `SNAPSHOT` remains available for scoring imported output.
 
 Production containers:
 
@@ -373,12 +379,10 @@ Production rejects unsafe `change-me` secrets. The mock LLM provider requires no
 key and is the default for tests. Real OpenAI usage requires `LLM_PROVIDER=openai`,
 `LLM_API_KEY`, and `LLM_MODEL`.
 
-## Current Limitations and M6
+## Deferred Scope
 
-M5 execution remains synchronous. Policy decisions are deterministic, Agents do not
-approve their own actions or campaigns, and Agents do not publish campaigns. M5 has
-no vector database and no external publishing. Frontend approval UI, distributed
-workers and queues, semantic/vector memory, external publishing integrations,
-OpenTelemetry, Prometheus/Grafana, production alerts, evaluation frameworks, and cost
-or quality dashboards remain deferred to M6 or later. Manual review resolution from
-`MANUAL_REVIEW_REQUIRED` also remains a future explicit product flow.
+M6 is implemented in the backend. The intentionally deferred scope is the full
+product frontend, external publishing integrations, vector/semantic memory,
+autonomous supervision, enterprise integrations, and multi-region deployment.
+Agents still cannot approve campaigns, publish externally, execute arbitrary SQL or
+shell commands, or bypass deterministic policy and human approval.

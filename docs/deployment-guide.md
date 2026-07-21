@@ -12,6 +12,11 @@ Set production secrets and `DATABASE_URL` externally. Images contain no `.env` f
 and run as a non-root user. Compose waits for PostgreSQL, runs `alembic upgrade head`
 once, then starts API and worker. Verify `/ready`, worker heartbeat, and migrations.
 
+Set a strong `METRICS_TOKEN`. Prometheus must send it as a bearer credential; use the
+sample `deploy/prometheus/prometheus.yml` with a mounted secret file. The normal JWT
+and end-user routes do not grant metrics access. Request payloads are limited by
+actual bytes received, including chunked requests.
+
 ## Rollout and Rollback
 
 1. Back up PostgreSQL and record the current application/migration revision.

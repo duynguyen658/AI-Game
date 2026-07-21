@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class OperationsSummary(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    application_version: str
     jobs: dict[str, int]
     alerts: dict[str, int]
     workflows: dict[str, int]

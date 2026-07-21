@@ -36,6 +36,7 @@ jobs:
       JWT_SECRET_KEY: test-jwt-secret
       N8N_WEBHOOK_SECRET: test-webhook-secret
       APPROVAL_TOKEN_SECRET: test-approval-secret
+      METRICS_TOKEN: test-monitoring-secret
       RUN_POSTGRES_TESTS: "1"
 
     steps:
@@ -73,7 +74,10 @@ jobs:
         run: python -m pytest --cov=app --cov-report=term-missing
 
       - name: Evaluation regression gate
-        run: python -m pytest tests/unit/evaluation -v
+        run: python -m pytest tests/integration/test_m6_evaluation.py::test_golden_m6_system_dataset_passes_committed_regression_gate -v
+
+      - name: M6 production blocker tests
+        run: python -m pytest tests/integration/test_m6_outbox.py tests/integration/test_m6_jobs.py tests/unit/observability/test_observability.py -v
 
       - name: API and worker smoke
         run: python -c "from app.main import app; from app.jobs.handlers import build_job_handlers; from app.database.session import AsyncSessionLocal; assert app and build_job_handlers(AsyncSessionLocal)"

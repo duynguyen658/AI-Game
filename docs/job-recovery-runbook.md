@@ -12,8 +12,9 @@ Completion is fenced by owner and lease expiry. Do not manually update lock colu
 
 ## Failed and Dead-Letter Jobs
 
-Retryable failures use persisted bounded exponential backoff. Non-retryable payload
-or type failures move directly to DEAD_LETTER. An operator may call
+Retryable failures use persisted bounded exponential backoff. Only explicit timeout,
+rate-limit, provider-unavailable, temporary database, tool-timeout, or lease errors
+retry. Unknown and permanent errors move directly to DEAD_LETTER. An operator may call
 `POST /jobs/{job_id}/retry` after correcting the condition; exhausted jobs receive one
 explicit additional attempt. Cancel only at handler-safe checkpoints.
 
@@ -21,4 +22,6 @@ explicit additional attempt. Cancel only at handler-safe checkpoints.
 
 Call `POST /operations/outbox/reconcile`. A consumer failure remains FAILED with its
 safe error and next availability. Exhausted events remain DEAD_LETTER and must not be
-deleted to hide the incident. Verify consumer idempotency before manual replay.
+deleted to hide the incident. A stale owner is fenced by worker ID, lease expiry, and
+lease version and must not attempt a second terminal mutation. Verify consumer
+idempotency before manual replay.
