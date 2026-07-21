@@ -1,0 +1,2 @@
+import { ImageRequestForm } from "./form"; import { PageHeader } from "@/components/layout/page-header";
+export const metadata = { title: "Generate image" }; export default function NewImagePage() { return <div className="space-y-6"><PageHeader title="Generate campaign image" description="Generation is asynchronous and every completed asset requires explicit human review." /><ImageRequestForm /></div>; }

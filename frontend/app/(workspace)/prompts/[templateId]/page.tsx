@@ -1,0 +1,1 @@
+import { PromptTemplateDetail } from "./view"; export const metadata = { title: "Prompt template" }; export default async function PromptTemplatePage({ params }: { params: Promise<{ templateId: string }> }) { const { templateId } = await params; return <PromptTemplateDetail templateId={templateId} />; }
