@@ -1,7 +1,8 @@
 import pytest
+import jwt
 
 from app.core.constants import UserRole
-from app.core.exceptions import AuthorizationError
+from app.core.exceptions import AuthenticationError, AuthorizationError
 from app.service.auth_service import AuthService, AuthenticatedActor
 
 
@@ -34,3 +35,35 @@ def test_action_approval_role_hierarchy() -> None:
             UserRole.MANAGER.value,
             "CONTENT_REVIEWER",
         )
+
+
+def test_jwt_issuer_and_audience_are_verified() -> None:
+    service = AuthService()
+    service.settings = service.settings.model_copy(
+        update={"jwt_issuer": "cyber-legends", "jwt_audience": "operators"}
+    )
+    token = jwt.encode(
+        {
+            "sub": "manager-1",
+            "role": UserRole.MANAGER.value,
+            "iss": "cyber-legends",
+            "aud": "operators",
+        },
+        service.settings.jwt_secret_key.get_secret_value(),
+        algorithm=service.settings.jwt_algorithm,
+    )
+    actor = service.decode_bearer_token(token)
+    assert actor == AuthenticatedActor("manager-1", UserRole.MANAGER)
+
+    invalid = jwt.encode(
+        {
+            "sub": "manager-1",
+            "role": UserRole.MANAGER.value,
+            "iss": "cyber-legends",
+            "aud": "wrong-audience",
+        },
+        service.settings.jwt_secret_key.get_secret_value(),
+        algorithm=service.settings.jwt_algorithm,
+    )
+    with pytest.raises(AuthenticationError):
+        service.decode_bearer_token(invalid)

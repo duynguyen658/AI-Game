@@ -13,7 +13,6 @@ from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import get_llm_client
 from app.core.constants import (
     AgentName,
     AgentRunStatus,
@@ -43,6 +42,8 @@ from app.database.models import (
 )
 from app.llm.agent_turn import AgentToolRequest, AgentTurn
 from app.database.session import AsyncSessionLocal
+from app.jobs.handlers import build_job_handlers
+from app.jobs.worker import JobWorker
 from app.llm.mock_client import MockLLMClient
 from app.repositories.approval_repository import ApprovalRepository
 from app.repositories.campaign_repository import CampaignRepository
@@ -77,7 +78,10 @@ async def clean_database() -> AsyncIterator[None]:
     async with AsyncSessionLocal() as session:
         await session.execute(
             text(
-                "TRUNCATE approval_records, workflow_runs, campaigns, security_events "
+                "TRUNCATE evaluation_results, evaluation_runs, evaluation_cases, "
+                "evaluation_datasets, operational_alerts, outbox_events, job_attempts, "
+                "background_jobs, worker_heartbeats, approval_records, workflow_runs, "
+                "campaigns, security_events "
                 "RESTART IDENTITY CASCADE"
             )
         )
@@ -86,7 +90,10 @@ async def clean_database() -> AsyncIterator[None]:
     async with AsyncSessionLocal() as session:
         await session.execute(
             text(
-                "TRUNCATE approval_records, workflow_runs, campaigns, security_events "
+                "TRUNCATE evaluation_results, evaluation_runs, evaluation_cases, "
+                "evaluation_datasets, operational_alerts, outbox_events, job_attempts, "
+                "background_jobs, worker_heartbeats, approval_records, workflow_runs, "
+                "campaigns, security_events "
                 "RESTART IDENTITY CASCADE"
             )
         )
@@ -150,6 +157,17 @@ async def create_campaign(
         )
     )
     await session.commit()
+
+
+async def run_queued_workflow(llm_client: MockLLMClient | None = None) -> None:
+    worker = JobWorker(
+        f"m6-test-worker-{uuid4()}",
+        build_job_handlers(
+            AsyncSessionLocal,
+            llm_client_factory=(lambda: llm_client or MockLLMClient()),
+        ),
+    )
+    assert await worker.run_once() >= 1
 
 
 def generated_content(title: str = "Cyber Legends") -> GeneratedContent:
@@ -408,8 +426,10 @@ async def test_e2e_approval_lifecycle() -> None:
         assert workflow_response.status_code == 201
         workflow_id = workflow_response.json()["workflow_id"]
         run_response = await client.post(f"/workflows/{workflow_id}/run")
-        assert run_response.status_code == 200
-        assert run_response.json()["status"] == CampaignStatus.PENDING_APPROVAL
+        assert run_response.status_code == 202
+        await run_queued_workflow()
+        completed = await client.get(f"/workflows/{workflow_id}")
+        assert completed.json()["status"] == CampaignStatus.PENDING_APPROVAL
 
         approval_response = await client.post(
             "/approvals",
@@ -1099,8 +1119,11 @@ async def test_api_campaign_workflow_approval_and_error_responses(
     assert missing_workflow.status_code == 404
 
     run_response = await api_client.post(f"/workflows/{workflow_id}/run")
-    assert run_response.status_code == 200
-    assert run_response.json()["status"] == CampaignStatus.PENDING_APPROVAL
+    assert run_response.status_code == 202
+    assert run_response.json()["status"] == "PENDING"
+    await run_queued_workflow()
+    completed_workflow = await api_client.get(f"/workflows/{workflow_id}")
+    assert completed_workflow.json()["status"] == CampaignStatus.PENDING_APPROVAL
 
     unauthenticated = await api_client.post(
         "/approvals",
@@ -1156,12 +1179,12 @@ async def test_api_campaign_workflow_approval_and_error_responses(
 async def test_api_e2e_revision_failure_and_retry_flows(
     api_client: AsyncClient,
 ) -> None:
-    from app.main import app
-
     await api_client.post("/campaigns", json=campaign_payload("CL-API-REV"))
     original_response = await api_client.post("/workflows/campaigns/CL-API-REV")
     original_workflow_id = original_response.json()["workflow_id"]
-    await api_client.post(f"/workflows/{original_workflow_id}/run")
+    original_run = await api_client.post(f"/workflows/{original_workflow_id}/run")
+    assert original_run.status_code == 202
+    await run_queued_workflow()
     revision_request = await api_client.post(
         "/approvals",
         json={
@@ -1180,7 +1203,11 @@ async def test_api_e2e_revision_failure_and_retry_flows(
     revision_payload = revision_response.json()
     assert revision_payload["parent_workflow_id"] == original_workflow_id
     assert revision_payload["revision_number"] == 1
-    await api_client.post(f"/workflows/{revision_payload['workflow_id']}/run")
+    revision_run = await api_client.post(
+        f"/workflows/{revision_payload['workflow_id']}/run"
+    )
+    assert revision_run.status_code == 202
+    await run_queued_workflow()
     revision_approval = await api_client.post(
         "/approvals",
         json={
@@ -1196,16 +1223,15 @@ async def test_api_e2e_revision_failure_and_retry_flows(
     failure_client = MockLLMClient(
         scripted_outputs=[LLMProviderError("api_key=real-secret Bearer bad.token")]
     )
-    app.dependency_overrides[get_llm_client] = lambda: failure_client
     await api_client.post("/campaigns", json=campaign_payload("CL-API-FAIL"))
     failure_workflow = await api_client.post("/workflows/campaigns/CL-API-FAIL")
     failure_workflow_id = failure_workflow.json()["workflow_id"]
     failure_run = await api_client.post(f"/workflows/{failure_workflow_id}/run")
-    assert failure_run.status_code == 500
+    assert failure_run.status_code == 202
+    await run_queued_workflow(failure_client)
     persisted_failure = await api_client.get(f"/workflows/{failure_workflow_id}")
     assert persisted_failure.json()["status"] == CampaignStatus.FAILED
     assert "real-secret" not in str(persisted_failure.json())
-    app.dependency_overrides.clear()
 
     retry_client = MockLLMClient(
         scripted_outputs=[
@@ -1221,16 +1247,19 @@ async def test_api_e2e_revision_failure_and_retry_flows(
             review("PASS", 90),
         ]
     )
-    app.dependency_overrides[get_llm_client] = lambda: retry_client
     await api_client.post("/campaigns", json=campaign_payload("CL-API-RETRY"))
     retry_workflow = await api_client.post("/workflows/campaigns/CL-API-RETRY")
     retry_run = await api_client.post(
         f"/workflows/{retry_workflow.json()['workflow_id']}/run"
     )
-    assert retry_run.status_code == 200
-    assert retry_run.json()["status"] == CampaignStatus.PENDING_APPROVAL
-    assert retry_run.json()["retry_count"] == 1
-    assert retry_run.json()["llm_call_count"] == 5
+    assert retry_run.status_code == 202
+    await run_queued_workflow(retry_client)
+    retry_result = await api_client.get(
+        f"/workflows/{retry_workflow.json()['workflow_id']}"
+    )
+    assert retry_result.json()["status"] == CampaignStatus.PENDING_APPROVAL
+    assert retry_result.json()["retry_count"] == 1
+    assert retry_result.json()["llm_call_count"] == 5
 
 
 @pytest.mark.asyncio
