@@ -1,0 +1,20 @@
+{
+  "dataset": "m7-prompt-golden",
+  "version": "1",
+  "execution_mode": "SYSTEM",
+  "case_count": 1,
+  "cases": [
+    "campaign-brief-fixture"
+  ],
+  "minimums": {
+    "quality": 0.8,
+    "schema_validity": 1.0,
+    "success_rate": 0.9,
+    "first_pass_acceptance": 0.8
+  },
+  "maximums": {
+    "error_rate": 0.1,
+    "manual_review_rate": 0.2
+  },
+  "notes": "Deterministic fixture baseline for prompt and provider comparisons. Human approval remains required for promotion."
+}

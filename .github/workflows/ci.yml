@@ -7,6 +7,7 @@ on:
       - agentic-core
       - feature/m5-policy-memory-actions
       - feature/m6-production-operations
+      - feature/m7-applied-ai-workflows
   pull_request:
     branches:
       - main
@@ -33,6 +34,8 @@ jobs:
       APP_ENV: testing
       DATABASE_URL: postgresql+asyncpg://cyber_legends:change-me-test@localhost:5432/cyber_legends_test
       LLM_PROVIDER: mock
+      IMAGE_PROVIDER: mock
+      ENABLE_REAL_VIDEO_GENERATION: "false"
       JWT_SECRET_KEY: test-jwt-secret
       N8N_WEBHOOK_SECRET: test-webhook-secret
       APPROVAL_TOKEN_SECRET: test-approval-secret
@@ -79,6 +82,9 @@ jobs:
       - name: M6 production blocker tests
         run: python -m pytest tests/integration/test_m6_outbox.py tests/integration/test_m6_jobs.py tests/unit/observability/test_observability.py -v
 
+      - name: M7 applied AI blocker tests
+        run: python -m pytest tests/integration/test_m7_applied_ai.py tests/unit/llm/test_provider_contracts.py tests/unit/integrations tests/unit/applied_workflows tests/unit/media -v
+
       - name: API and worker smoke
         run: python -c "from app.main import app; from app.jobs.handlers import build_job_handlers; from app.database.session import AsyncSessionLocal; assert app and build_job_handlers(AsyncSessionLocal)"
 
@@ -109,7 +115,7 @@ jobs:
         run: docker run --rm cyber-legends-api:${{ github.sha }} python -c "from app.main import app; assert app"
 
       - name: Smoke worker image
-        run: docker run --rm cyber-legends-worker:${{ github.sha }} python -c "from app.jobs.handlers import build_job_handlers; from app.database.session import AsyncSessionLocal; assert len(build_job_handlers(AsyncSessionLocal)) == 6"
+        run: docker run --rm cyber-legends-worker:${{ github.sha }} python -c "from app.jobs.handlers import build_job_handlers; from app.database.session import AsyncSessionLocal; assert len(build_job_handlers(AsyncSessionLocal)) >= 10"
 
       - name: Scan API image
         uses: aquasecurity/trivy-action@v0.36.0
