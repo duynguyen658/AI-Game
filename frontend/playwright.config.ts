@@ -6,7 +6,7 @@ export default defineConfig({
   timeout: 90000,
   retries: process.env.CI ? 2 : 0,
   workers: 1,
-  snapshotPathTemplate: "{testDir}/{testFilePath}-snapshots/{arg}{ext}",
+  snapshotPathTemplate: "{testDir}/{testFilePath}-snapshots/{arg}-{platform}{ext}",
   reporter: [["list"], ["html", { open: "never" }]],
   use: { baseURL: process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:43129", actionTimeout: 15000, navigationTimeout: 45000, trace: "retain-on-failure", screenshot: "only-on-failure", locale: "en-US", timezoneId: "UTC" },
   webServer: process.env.PLAYWRIGHT_EXTERNAL_SERVER ? undefined : {
