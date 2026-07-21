@@ -1,0 +1,47 @@
+{
+  "name": "AI Game - Approval Notification",
+  "nodes": [
+    {
+      "parameters": {"path": "ai-game-approval", "httpMethod": "POST"},
+      "id": "approval-trigger",
+      "name": "Approval Event",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{$env.AI_GAME_API_URL + '/jobs/' + $json.job_id}}",
+        "sendHeaders": true,
+        "headerParameters": {"parameters": [{"name": "Authorization", "value": "={{'Bearer ' + $env.AI_GAME_API_TOKEN}}"}]},
+        "options": {"timeout": 15000}
+      },
+      "id": "poll-job",
+      "name": "Poll Job",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [480, 300],
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {"operation": "post", "channel": "={{$env.APPROVAL_SLACK_CHANNEL}}", "text": "={{'Approval required: ' + $json.idempotency_key}}"},
+      "id": "notify",
+      "name": "Notify Reviewer",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [720, 300],
+      "onError": "continueErrorOutput"
+    }
+  ],
+  "connections": {
+    "Approval Event": {"main": [[{"node": "Poll Job", "type": "main", "index": 0}]]},
+    "Poll Job": {"main": [[{"node": "Notify Reviewer", "type": "main", "index": 0}]]}
+  },
+  "settings": {"executionOrder": "v1"},
+  "active": false,
+  "versionId": "m7-approval-v1"
+}

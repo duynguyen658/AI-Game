@@ -1,0 +1,43 @@
+{
+  "name": "AI Game - Campaign from Google Form",
+  "nodes": [
+    {
+      "parameters": {"path": "ai-game-campaign", "httpMethod": "POST", "responseMode": "lastNode"},
+      "id": "form-trigger",
+      "name": "Google Form Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.AI_GAME_API_URL + '/integrations/n8n/campaigns'}}",
+        "sendHeaders": true,
+        "headerParameters": {"parameters": [
+          {"name": "X-N8N-Timestamp", "value": "={{$now.toUnixInteger().toString()}}"},
+          {"name": "X-N8N-Signature", "value": "={{$env.AI_GAME_WEBHOOK_SIGNATURE}}"},
+          {"name": "X-Idempotency-Key", "value": "={{'form-' + $execution.id}}"}
+        ]},
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{JSON.stringify($json)}}",
+        "options": {"timeout": 30000}
+      },
+      "id": "create-campaign",
+      "name": "Create Campaign",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [480, 300],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput"
+    }
+  ],
+  "connections": {"Google Form Webhook": {"main": [[{"node": "Create Campaign", "type": "main", "index": 0}]]}},
+  "settings": {"executionOrder": "v1"},
+  "active": false,
+  "versionId": "m7-campaign-form-v1"
+}

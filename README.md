@@ -5,6 +5,20 @@ bounded, observable Agentic Core. The application remains authoritative for work
 state, retries, policy and approval decisions, persistence, authorization, and audit
 history.
 
+Milestone 7 extends this foundation into an Applied AI workflow platform with managed
+prompt versions and experiments, business-impact analytics, OpenAI/Gemini/Anthropic
+adapters, signed n8n webhooks, review-gated media, deterministic CSV analysis, and safe
+PDF/DOCX/TXT processing. No frontend or automatic publishing is included.
+
+```bash
+alembic upgrade head
+python -m app.cli.seed_m7_demo
+```
+
+Use `LLM_PROVIDER=mock` and `IMAGE_PROVIDER=mock` for deterministic local runs. The
+stable workflow catalog is available at `GET /applied-workflows`; M7 architecture and
+integration guides begin in `docs/architecture-m7.md`.
+
 ## Architecture
 
 ```text

@@ -1,0 +1,3 @@
+# Provider Comparison
+
+**Business problem:** Teams needed evidence for model selection. **Manual process:** Outputs used inconsistent prompts and datasets. **AI workflow:** One prompt version and dataset produce normalized provider metrics. **Prompt/provider choice:** OpenAI, Gemini, and Anthropic share contracts. **Validation:** Fixtures in CI and manual scheduled real runs. **Failure cases:** Unsupported capabilities fail before calls. **Human review:** Recommendations never change routing automatically. **Before/after metrics:** Quality, schema, latency, tokens, cost, retries, review, and acceptance. **Lesson learned:** Comparable inputs matter more than vendor-specific shapes.

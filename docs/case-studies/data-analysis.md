@@ -1,0 +1,3 @@
+# Data Analysis
+
+**Business problem:** CSV reporting consumed analyst time. **Manual process:** Analysts cleaned files and calculated ratios. **AI workflow:** Safe ingestion computes metrics and anomalies before explanation. **Prompt/provider choice:** Managed explanation prompt; arithmetic stays in Python. **Validation:** Known-value fixtures, Decimal checks, row limits, and formula-safe previews. **Failure cases:** Invalid values and oversized datasets stop processing. **Human review:** Analysts validate anomalies before budget changes. **Before/after metrics:** Duration, automated steps, acceptance, errors, and cost. **Lesson learned:** Deterministic numeric authority makes explanations reproducible.

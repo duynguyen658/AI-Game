@@ -1,0 +1,50 @@
+{
+  "name": "AI Game - Campaign Report to Google Sheets",
+  "nodes": [
+    {
+      "parameters": {"path": "ai-game-campaign-report", "httpMethod": "POST"},
+      "id": "report-trigger",
+      "name": "Report Event",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{$env.AI_GAME_API_URL + '/analytics/business-impact?task_type=campaign_content'}}",
+        "sendHeaders": true,
+        "headerParameters": {"parameters": [
+          {"name": "Authorization", "value": "={{'Bearer ' + $env.AI_GAME_API_TOKEN}}"},
+          {"name": "X-Idempotency-Key", "value": "={{'report-' + $execution.id}}"}
+        ]},
+        "options": {"timeout": 30000}
+      },
+      "id": "fetch-report",
+      "name": "Fetch Impact Report",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [480, 300],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {"operation": "append", "documentId": "={{$env.CAMPAIGN_REPORT_SHEET_ID}}", "sheetName": "Impact", "columns": {"mappingMode": "autoMapInputData"}},
+      "id": "append-sheet",
+      "name": "Append Google Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "position": [720, 300],
+      "onError": "continueErrorOutput"
+    }
+  ],
+  "connections": {
+    "Report Event": {"main": [[{"node": "Fetch Impact Report", "type": "main", "index": 0}]]},
+    "Fetch Impact Report": {"main": [[{"node": "Append Google Sheet", "type": "main", "index": 0}]]}
+  },
+  "settings": {"executionOrder": "v1"},
+  "active": false,
+  "versionId": "m7-report-v1"
+}

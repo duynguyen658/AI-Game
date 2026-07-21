@@ -1,0 +1,3 @@
+# Prompt Optimization
+
+**Business problem:** Campaign brief quality varied by wording. **Manual process:** Reviewers compared drafts informally. **AI workflow:** Versioned control and candidate prompts run against a golden dataset. **Prompt/provider choice:** Managed structured prompts, fixtures in CI, manual real-provider runs. **Validation:** Quality, schema validity, latency, cost, acceptance, and errors. **Failure cases:** Missing variables and malformed output fail before promotion. **Human review:** A manager activates the selected version. **Before/after metrics:** Comparison scores are stored without inventing production gains. **Lesson learned:** Evaluation and promotion must remain separate decisions.
