@@ -4,7 +4,27 @@ from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+class AcceptanceFields(BaseModel):
+    output_accepted: bool | None = None
+    accepted_without_editing: bool = False
+    editing_minutes: Decimal = Field(ge=0)
+    rework_count: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def validate_acceptance(self) -> AcceptanceFields:
+        if self.accepted_without_editing:
+            if self.output_accepted is not True:
+                raise ValueError(
+                    "accepted_without_editing requires explicit output acceptance"
+                )
+            if self.editing_minutes != 0 or self.rework_count != 0:
+                raise ValueError(
+                    "accepted_without_editing requires zero editing and rework"
+                )
+        return self
 
 
 class TaskBaselineCreate(BaseModel):
@@ -28,16 +48,13 @@ class TaskBaselineRead(TaskBaselineCreate):
     updated_at: datetime
 
 
-class TaskImpactCreate(BaseModel):
+class TaskImpactCreate(AcceptanceFields):
     model_config = ConfigDict(extra="forbid")
 
     department: str | None = Field(default=None, max_length=100)
     manual_duration_baseline_override: Decimal | None = Field(default=None, ge=0)
     steps_before: int = Field(ge=0)
     automated_steps: int = Field(ge=0)
-    accepted_without_editing: bool
-    editing_minutes: Decimal = Field(ge=0)
-    rework_count: int = Field(ge=0)
     error_count: int = Field(ge=0)
 
 
@@ -61,7 +78,8 @@ class TaskImpactRead(BaseModel):
     steps_after: int
     automated_steps: int
     automation_rate: Decimal
-    output_accepted: bool
+    task_completed_successfully: bool
+    output_accepted: bool | None
     accepted_without_editing: bool
     editing_minutes: Decimal
     rework_count: int
@@ -70,16 +88,13 @@ class TaskImpactRead(BaseModel):
     created_at: datetime
 
 
-class UserFeedbackCreate(BaseModel):
+class UserFeedbackCreate(AcceptanceFields):
     model_config = ConfigDict(extra="forbid")
 
     rating: int = Field(ge=1, le=5)
     helpfulness: int = Field(ge=1, le=5)
     accuracy: int = Field(ge=1, le=5)
     ease_of_use: int = Field(ge=1, le=5)
-    accepted_without_editing: bool
-    editing_minutes: Decimal = Field(ge=0)
-    rework_count: int = Field(ge=0)
     would_use_again: bool
     comment: str | None = Field(default=None, max_length=2000)
     expected_version: int | None = Field(default=None, ge=1)
@@ -106,6 +121,8 @@ class BusinessImpactAnalytics(BaseModel):
     completed_tasks: int
     total_minutes_saved: Decimal
     average_automation_rate: Decimal
+    technical_success_rate: Decimal
+    human_acceptance_rate: Decimal
     first_pass_acceptance_rate: Decimal
     revision_rate: Decimal
     error_rate: Decimal

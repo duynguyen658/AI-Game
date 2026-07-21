@@ -4,6 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
+import structlog
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,8 +12,15 @@ from app.business_impact.calculator import ImpactCalculator
 from app.core.constants import AppliedTaskStatus, OutboxEventType, UserRole
 from app.core.exceptions import (
     AuthorizationError,
+    BusinessImpactPersistenceError,
+    FeedbackPersistenceError,
     M7ConflictError,
     M7ResourceNotFoundError,
+)
+from app.database.m7_integrity import (
+    FEEDBACK_TASK_ACTOR_UNIQUE_CONSTRAINT,
+    IMPACT_TASK_UNIQUE_CONSTRAINT,
+    is_constraint,
 )
 from app.core.sanitization import sanitize_text
 from app.database.models import (
@@ -25,6 +33,12 @@ from app.outbox.service import OutboxService
 from app.repositories.business_impact_repository import BusinessImpactRepository
 from app.repositories.feedback_repository import FeedbackRepository
 from app.repositories.applied_workflow_repository import AppliedWorkflowRepository
+from app.repositories.media_repository import MediaRepository
+from app.observability.metrics import (
+    BUSINESS_OUTPUT_ACCEPTANCE,
+    PERSISTENCE_CONSTRAINT_CONFLICTS,
+    PERSISTENCE_UNKNOWN_CONSTRAINT_FAILURES,
+)
 from app.schemas.business_impact import (
     BusinessImpactAnalytics,
     TaskBaselineCreate,
@@ -35,6 +49,8 @@ from app.schemas.business_impact import (
     UserFeedbackRead,
 )
 from app.service.auth_service import AuthenticatedActor
+
+logger = structlog.get_logger()
 
 
 class BusinessImpactService:
@@ -85,6 +101,16 @@ class BusinessImpactService:
         agent_run_id = _metadata_uuid(task.input_metadata, "agent_run_id")
         if task.provider is None or task.model is None:
             raise M7ConflictError("Task execution provenance is incomplete")
+        output_accepted = data.output_accepted
+        if output_accepted is None:
+            reviewable_asset = await MediaRepository(self.session).get_asset_by_task(
+                task_run_id
+            )
+            if reviewable_asset is not None:
+                if reviewable_asset.status == "APPROVED":
+                    output_accepted = True
+                elif reviewable_asset.status == "REJECTED":
+                    output_accepted = False
         model = AITaskImpactModel(
             task_run_id=task_run_id,
             task_type=task.workflow_type.lower(),
@@ -100,7 +126,8 @@ class BusinessImpactService:
             steps_before=data.steps_before,
             steps_after=max(data.steps_before - data.automated_steps, 0),
             automated_steps=data.automated_steps,
-            output_accepted=True,
+            task_completed_successfully=True,
+            output_accepted=output_accepted,
             accepted_without_editing=data.accepted_without_editing,
             editing_minutes=data.editing_minutes,
             rework_count=data.rework_count,
@@ -111,22 +138,36 @@ class BusinessImpactService:
                 data.automated_steps, data.steps_before
             ),
         )
-        await self.impacts.create_impact(model)
-        await OutboxService(self.session).add_event(
-            event_type=OutboxEventType.TASK_IMPACT_RECORDED,
-            aggregate_type="applied_task",
-            aggregate_id=str(task_run_id),
-            payload={
-                "task_run_id": str(task_run_id),
-                "minutes_saved": str(model.minutes_saved),
-                "automation_rate": str(model.automation_rate),
-            },
-        )
         try:
+            await self.impacts.create_impact(model)
+            await OutboxService(self.session).add_event(
+                event_type=OutboxEventType.TASK_IMPACT_RECORDED,
+                aggregate_type="applied_task",
+                aggregate_id=str(task_run_id),
+                payload={
+                    "task_run_id": str(task_run_id),
+                    "minutes_saved": str(model.minutes_saved),
+                    "automation_rate": str(model.automation_rate),
+                },
+            )
             await self.session.commit()
         except IntegrityError as exc:
             await self.session.rollback()
-            raise M7ConflictError("Impact already exists for this task run") from exc
+            if is_constraint(exc, IMPACT_TASK_UNIQUE_CONSTRAINT):
+                PERSISTENCE_CONSTRAINT_CONFLICTS.labels("business_impact").inc()
+                logger.info("known_constraint_conflict", category="business_impact")
+                raise M7ConflictError(
+                    "Impact already exists for this task run"
+                ) from exc
+            PERSISTENCE_UNKNOWN_CONSTRAINT_FAILURES.labels("business_impact").inc()
+            logger.exception("unknown_constraint_failure", operation="business_impact")
+            raise BusinessImpactPersistenceError(
+                "Unable to persist business impact"
+            ) from exc
+        if output_accepted is not None:
+            BUSINESS_OUTPUT_ACCEPTANCE.labels(
+                "accepted" if output_accepted else "rejected"
+            ).inc()
         return TaskImpactRead.model_validate(model)
 
     async def record_feedback(
@@ -153,38 +194,60 @@ class BusinessImpactService:
         values["comment"] = (
             sanitize_text(data.comment, max_characters=2000) if data.comment else None
         )
-        if existing is None:
-            if data.expected_version is not None:
-                raise M7ConflictError("Feedback does not exist at the expected version")
-            model = UserFeedbackModel(
-                task_run_id=task_run_id, actor_id=actor_id, **values
-            )
-            await self.feedback.create(model)
-        else:
-            if data.expected_version != existing.version:
-                raise M7ConflictError("Feedback changed; refresh and retry")
-            for field, value in values.items():
-                setattr(existing, field, value)
-            existing.version += 1
-            model = existing
-        await OutboxService(self.session).add_event(
-            event_type=OutboxEventType.USER_FEEDBACK_RECEIVED,
-            aggregate_type="applied_task",
-            aggregate_id=str(task_run_id),
-            payload={
-                "task_run_id": str(task_run_id),
-                "actor_id": actor_id,
-                "rating": data.rating,
-            },
-            idempotency_key=f"feedback:{model.user_feedback_id}:v{model.version}",
-        )
+        impact = await self.impacts.get_impact_by_task(task_run_id)
+        if impact is not None and data.output_accepted is not None:
+            impact.output_accepted = data.output_accepted
+            impact.accepted_without_editing = data.accepted_without_editing
+            impact.editing_minutes = data.editing_minutes
+            impact.rework_count = data.rework_count
         try:
+            if existing is None:
+                if data.expected_version is not None:
+                    raise M7ConflictError(
+                        "Feedback does not exist at the expected version"
+                    )
+                model = UserFeedbackModel(
+                    task_run_id=task_run_id, actor_id=actor_id, **values
+                )
+                await self.feedback.create(model)
+            else:
+                if data.expected_version != existing.version:
+                    raise M7ConflictError("Feedback changed; refresh and retry")
+                for field, value in values.items():
+                    setattr(existing, field, value)
+                existing.version += 1
+                model = existing
+            await OutboxService(self.session).add_event(
+                event_type=OutboxEventType.USER_FEEDBACK_RECEIVED,
+                aggregate_type="applied_task",
+                aggregate_id=str(task_run_id),
+                payload={
+                    "task_run_id": str(task_run_id),
+                    "actor_id": actor_id,
+                    "rating": data.rating,
+                },
+                idempotency_key=f"feedback:{model.user_feedback_id}:v{model.version}",
+            )
             await self.session.commit()
         except IntegrityError as exc:
             await self.session.rollback()
-            raise M7ConflictError(
-                "Feedback changed or already exists; refresh and retry"
-            ) from exc
+            if is_constraint(exc, FEEDBACK_TASK_ACTOR_UNIQUE_CONSTRAINT):
+                PERSISTENCE_CONSTRAINT_CONFLICTS.labels("feedback").inc()
+                logger.info("known_constraint_conflict", category="feedback")
+                raise M7ConflictError(
+                    "Feedback changed or already exists; refresh and retry"
+                ) from exc
+            PERSISTENCE_UNKNOWN_CONSTRAINT_FAILURES.labels("feedback").inc()
+            logger.exception("unknown_constraint_failure", operation="feedback")
+            raise FeedbackPersistenceError("Unable to persist feedback") from exc
+        if data.output_accepted is not None:
+            BUSINESS_OUTPUT_ACCEPTANCE.labels(
+                "accepted" if data.output_accepted else "rejected"
+            ).inc()
+            logger.info(
+                "business_output_acceptance_recorded",
+                decision="accepted" if data.output_accepted else "rejected",
+            )
         return UserFeedbackRead.model_validate(model, from_attributes=True)
 
     async def _eligible_task(
@@ -250,12 +313,26 @@ class BusinessImpactService:
             if completed
             else Decimal(0)
         )
+        known_acceptance = [
+            item for item in impacts if item.output_accepted is not None
+        ]
+        technically_successful = sum(
+            item.task_completed_successfully for item in impacts
+        )
+        accepted = sum(item.output_accepted is True for item in known_acceptance)
         return BusinessImpactAnalytics(
             completed_tasks=completed,
             total_minutes_saved=total_minutes,
             average_automation_rate=average_automation,
+            technical_success_rate=ImpactCalculator.ratio(
+                technically_successful, completed
+            ),
+            human_acceptance_rate=ImpactCalculator.ratio(
+                accepted, len(known_acceptance)
+            ),
             first_pass_acceptance_rate=ImpactCalculator.first_pass_acceptance_rate(
-                sum(item.accepted_without_editing for item in impacts), completed
+                sum(item.accepted_without_editing for item in known_acceptance),
+                len(known_acceptance),
             ),
             revision_rate=ImpactCalculator.revision_rate(
                 sum(item.rework_count > 0 for item in impacts), completed

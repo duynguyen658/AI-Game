@@ -25,7 +25,9 @@ from app.core.exceptions import (
     M7ConflictError,
     M7ResourceNotFoundError,
     M7ValidationError,
+    UnknownConstraintPersistenceError,
 )
+from app.database.m7_integrity import PROMPT_TEMPLATE_SLUG_CONSTRAINT, is_constraint
 from app.core.sanitization import sanitize_json, sanitize_text
 from app.database.models import (
     PromptExperimentModel,
@@ -88,7 +90,11 @@ class PromptService:
             await self.session.commit()
         except IntegrityError as exc:
             await self.session.rollback()
-            raise M7ConflictError("Prompt template slug already exists") from exc
+            if is_constraint(exc, PROMPT_TEMPLATE_SLUG_CONSTRAINT):
+                raise M7ConflictError("Prompt template slug already exists") from exc
+            raise UnknownConstraintPersistenceError(
+                "Unable to persist prompt template"
+            ) from exc
         return template_to_schema(model)
 
     async def list_templates(
