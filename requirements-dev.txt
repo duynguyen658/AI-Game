@@ -1,0 +1,10 @@
+-r requirements.txt
+
+pytest
+pytest-asyncio
+pytest-cov
+respx
+ruff
+mypy
+bandit
+locust

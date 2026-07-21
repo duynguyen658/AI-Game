@@ -19,6 +19,14 @@ from app.core.exceptions import (
 from app.core.sanitization import sanitize_json, sanitize_text
 from app.database.integrity import get_constraint_name
 from app.database.models import AgentRunModel, AgentToolCallModel
+from app.observability.metrics import (
+    AGENT_FAILURES,
+    AGENT_LLM_CALLS,
+    AGENT_LIMIT_EXCEEDED,
+    AGENT_RUN_DURATION,
+    AGENT_RUNS,
+    AGENT_TOOL_CALLS,
+)
 from app.repositories.agent_run_repository import AgentRunRepository
 from app.repositories.agent_tool_call_repository import AgentToolCallRepository
 from app.repositories.campaign_repository import CampaignRepository
@@ -93,6 +101,7 @@ class AgentRunService:
         self._require_run_status(model, {AgentRunStatus.RUNNING})
         await self.runs.increment_llm_call_count(model)
         await self.session.commit()
+        AGENT_LLM_CALLS.labels(model.agent_name).inc()
 
     async def complete_run(self, agent_run_id: UUID) -> None:
         model = await self._required_run(agent_run_id)
@@ -101,6 +110,11 @@ class AgentRunService:
         )
         await self.runs.finish(model, AgentRunStatus.COMPLETED)
         await self.session.commit()
+        AGENT_RUNS.labels(model.agent_name, AgentRunStatus.COMPLETED.value).inc()
+        if model.completed_at is not None:
+            AGENT_RUN_DURATION.labels(
+                model.agent_name, AgentRunStatus.COMPLETED.value
+            ).observe(max((model.completed_at - model.started_at).total_seconds(), 0))
 
     async def fail_run(
         self, agent_run_id: UUID, exc: Exception, *, limit: bool = False
@@ -125,6 +139,14 @@ class AgentRunService:
             error_message=sanitize_text(exc, max_characters=2000),
         )
         await self.session.commit()
+        AGENT_RUNS.labels(model.agent_name, status.value).inc()
+        AGENT_FAILURES.labels(model.agent_name).inc()
+        if limit:
+            AGENT_LIMIT_EXCEEDED.labels(code).inc()
+        if model.completed_at is not None:
+            AGENT_RUN_DURATION.labels(model.agent_name, status.value).observe(
+                max((model.completed_at - model.started_at).total_seconds(), 0)
+            )
 
     async def create_tool_call(self, payload: ToolCallRequest) -> ToolCallRead:
         run = await self._required_run(payload.agent_run_id)
@@ -135,6 +157,7 @@ class AgentRunService:
         call = await self.tool_calls.create(safe_payload)
         await self.runs.increment_tool_call_count(run)
         await self.session.commit()
+        AGENT_TOOL_CALLS.labels(run.agent_name, payload.tool_name).inc()
         return tool_call_to_schema(call)
 
     async def start_tool_call(self, tool_call_id: UUID) -> None:

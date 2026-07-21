@@ -32,6 +32,7 @@ from app.core.exceptions import (
     ApplicationError,
 )
 from app.llm.base import LLMClient
+from app.observability.tracing import traced_operation
 from app.schemas.agent_run import AgentRunCreate
 from app.schemas.campaign import BriefAnalysis, GeneratedContent, QualityReview
 from app.service.agent_run_service import AgentRunService
@@ -144,9 +145,14 @@ class AgenticOrchestrator:
             ),
         )
         try:
-            output = await loop.run(
-                agent=agent, state=state, context=context, budget=self.budget
-            )
+            with traced_operation(
+                "agent.run",
+                agent_name=agent.name.value,
+                agent_run_id=str(run.agent_run_id),
+            ):
+                output = await loop.run(
+                    agent=agent, state=state, context=context, budget=self.budget
+                )
             await self.run_service.complete_run(run.agent_run_id)
             return output
         except asyncio.CancelledError:

@@ -1,0 +1,11 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: cyber-legends-api
+    metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials_file: /run/secrets/cyber_legends_metrics_token
+    static_configs:
+      - targets: ["api:8000"]

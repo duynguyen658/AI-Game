@@ -3,6 +3,8 @@ import sys
 
 import structlog
 
+from app.observability.logging import redact_log_event
+
 
 def configure_logging(log_level: str = "INFO") -> None:
     logging.basicConfig(
@@ -14,6 +16,7 @@ def configure_logging(log_level: str = "INFO") -> None:
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,
+            redact_log_event,
             structlog.processors.TimeStamper(fmt="iso", utc=True),
             structlog.processors.add_log_level,
             structlog.processors.StackInfoRenderer(),

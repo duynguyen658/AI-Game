@@ -62,7 +62,7 @@ docker compose logs postgres
 Install dependencies and run migrations:
 
 ```bash
-python -m pip install -r requirements.txt
+python -m pip install -r requirements-dev.txt
 alembic upgrade head
 ```
 
@@ -72,11 +72,19 @@ Run the API:
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
+Run the PostgreSQL worker in a second terminal:
+
+```bash
+python -m app.workers.main
+```
+
 Useful endpoints:
 
 - `GET /`
 - `GET /health`
 - `GET /ready`
+- `GET /live`
+- `GET /metrics` (monitoring bearer token required)
 - `GET /docs`
 - `POST /campaigns`
 - `POST /workflows/campaigns/{campaign_id}`
@@ -95,15 +103,57 @@ Useful endpoints:
 - `POST /action-requests/{action_request_id}/execute`
 - `GET /campaigns/{campaign_id}/memories`
 - `GET /workflows/{workflow_id}/memories`
+- `GET /jobs`
+- `GET /alerts`
+- `GET /operations/summary`
+- `GET /operations/workflows/{workflow_id}/timeline`
+- `GET /operations/campaigns/{campaign_id}/timeline`
+- `GET /evaluations`
 
 ## Workflow Behavior
 
-`POST /workflows/{workflow_id}/run` executes a deterministic synchronous workflow
-with short database checkpoints. Database rows are not locked while an LLM call is
-running. The app reserves an LLM call, commits that counter, calls the configured
-Agent loop, then locks the rows again before persisting the result. Each Agent LLM
-turn also reserves the workflow-level LLM count, so Agent budgets cannot bypass the
-M3 workflow limit.
+`POST /workflows/{workflow_id}/run` enqueues a PostgreSQL job and returns `202` with
+its `job_id`, status URL, and correlation ID. The worker executes the existing
+deterministic workflow with short database checkpoints. Database rows are not locked
+while an LLM call is running. Each Agent LLM turn reserves the workflow-level LLM
+count, so Agent budgets cannot bypass the M3 workflow limit.
+
+## M6 Production Operations
+
+M6 implements asynchronous PostgreSQL jobs, worker heartbeats, fenced leases,
+explicit retry classification, dead letters, cancellation checkpoints, a
+transactional outbox, operational alerts, evaluation, operator APIs, observability,
+and deployment hardening. Workflow/action state and corresponding outbox events
+commit in one transaction. Each outbox event has an independent lease, heartbeat,
+and fencing version; consumer side effects commit atomically with the fenced terminal
+update so stale owners cannot commit.
+
+HTTP requests, jobs, and outbox events propagate UUID correlation IDs. Logs are JSON
+and redact credentials, prompts, and authorization data. `/metrics` exposes
+low-cardinality Prometheus metrics only to the configured `METRICS_TOKEN` bearer;
+OpenTelemetry spans remain safe no-ops unless an SDK/exporter is configured by the
+deployment. `/ready` checks PostgreSQL, Alembic
+head, queue access, worker freshness when work is pending, outbox backlog, and LLM
+configuration without calling an LLM.
+
+Operator routes require `MANAGER` or `ADMIN`. Sensitive writes use a pluggable
+in-process rate limiter; a multi-replica deployment must replace it with a shared
+implementation. Evaluation datasets are immutable by name/version. Runs persist
+deterministic correctness, reliability, behavior, quality, token/cost metrics, and
+explicit regression results with prompt/model/tool/policy/application versions.
+`SYSTEM` evaluation executes the real campaign workflow and Agentic runtime with a
+deterministic mock provider; `SNAPSHOT` remains available for scoring imported output.
+
+Production containers:
+
+```bash
+docker compose -f docker-compose.production.yml up --build
+```
+
+No frontend exists in this repository, so the optional M6 operator dashboard remains
+deferred. The authenticated operator APIs are the supported v1 operator experience.
+See the M6 documents under `docs/` for recovery, deployment, alert, and evaluation
+procedures.
 
 ## Agent Runtime
 
@@ -329,12 +379,10 @@ Production rejects unsafe `change-me` secrets. The mock LLM provider requires no
 key and is the default for tests. Real OpenAI usage requires `LLM_PROVIDER=openai`,
 `LLM_API_KEY`, and `LLM_MODEL`.
 
-## Current Limitations and M6
+## Deferred Scope
 
-M5 execution remains synchronous. Policy decisions are deterministic, Agents do not
-approve their own actions or campaigns, and Agents do not publish campaigns. M5 has
-no vector database and no external publishing. Frontend approval UI, distributed
-workers and queues, semantic/vector memory, external publishing integrations,
-OpenTelemetry, Prometheus/Grafana, production alerts, evaluation frameworks, and cost
-or quality dashboards remain deferred to M6 or later. Manual review resolution from
-`MANUAL_REVIEW_REQUIRED` also remains a future explicit product flow.
+M6 is implemented in the backend. The intentionally deferred scope is the full
+product frontend, external publishing integrations, vector/semantic memory,
+autonomous supervision, enterprise integrations, and multi-region deployment.
+Agents still cannot approve campaigns, publish externally, execute arbitrary SQL or
+shell commands, or bypass deterministic policy and human approval.

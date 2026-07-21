@@ -22,6 +22,7 @@ from app.core.exceptions import (
 )
 from app.core.sanitization import sanitize_json
 from app.llm.agent_turn import AgentToolRequest
+from app.observability.tracing import traced_operation
 from app.schemas.tool_call import ToolCallRequest, ToolCallResult
 from app.service.agent_run_service import AgentRunService
 
@@ -41,6 +42,26 @@ class ToolExecutor:
         self.timeout_seconds = timeout_seconds
 
     async def execute(
+        self,
+        *,
+        agent_run_id: UUID,
+        agent_name: AgentName,
+        request: AgentToolRequest,
+        context: CampaignContext,
+    ) -> ToolCallResult:
+        with traced_operation(
+            "tool.execute",
+            agent_name=agent_name.value,
+            tool_name=request.tool_name,
+        ):
+            return await self._execute(
+                agent_run_id=agent_run_id,
+                agent_name=agent_name,
+                request=request,
+                context=context,
+            )
+
+    async def _execute(
         self,
         *,
         agent_run_id: UUID,

@@ -72,9 +72,15 @@ class WorkflowService:
                     current_step=WorkflowStep.HUMAN_REVIEW,
                     parent_workflow_id=parent.workflow_id,
                     revision_number=parent.revision_number + 1,
+                    evaluation_run_id=campaign.evaluation_run_id,
+                    evaluation_case_id=campaign.evaluation_case_id,
                 )
             else:
-                workflow = await self.workflow_repository.create(campaign_id)
+                workflow = await self.workflow_repository.create(
+                    campaign_id,
+                    evaluation_run_id=campaign.evaluation_run_id,
+                    evaluation_case_id=campaign.evaluation_case_id,
+                )
             await self.session.commit()
         except IntegrityError as exc:
             await self.session.rollback()

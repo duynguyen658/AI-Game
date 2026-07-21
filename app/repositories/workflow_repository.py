@@ -27,6 +27,8 @@ class WorkflowRepository:
         current_step: WorkflowStep = WorkflowStep.RECEIVE_CAMPAIGN,
         parent_workflow_id: UUID | None = None,
         revision_number: int = 0,
+        evaluation_run_id: UUID | None = None,
+        evaluation_case_id: UUID | None = None,
     ) -> WorkflowRunModel:
         if revision_number < 0:
             raise ValueError("revision_number must be non-negative")
@@ -36,6 +38,9 @@ class WorkflowRepository:
             revision_number=revision_number,
             status=status.value,
             current_step=current_step.value,
+            is_evaluation=evaluation_run_id is not None,
+            evaluation_run_id=evaluation_run_id,
+            evaluation_case_id=evaluation_case_id,
         )
         self.session.add(model)
         await self.session.flush()

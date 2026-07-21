@@ -1,13 +1,15 @@
-from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
 
-from app.api.dependencies import SessionDependency, get_llm_client
-from app.llm.base import LLMClient
+from app.api.dependencies import SessionDependency
+from app.core.constants import JobType
+from app.jobs.definitions import WorkflowRunJobPayload
+from app.jobs.queue import JobQueue
+from app.operations.rate_limit import enforce_sensitive_rate_limit
+from app.schemas.job import WorkflowEnqueueResponse
 from app.schemas.workflow_run import WorkflowRun
 from app.service.workflow_service import WorkflowService
-from app.workflows.campaign_workflow import CampaignWorkflow
 
 router = APIRouter(prefix="/workflows", tags=["Workflows"])
 
@@ -28,12 +30,29 @@ async def get_workflow(
     return await WorkflowService(session).get_workflow(workflow_id)
 
 
-@router.post("/{workflow_id}/run", response_model=WorkflowRun)
+@router.post(
+    "/{workflow_id}/run",
+    response_model=WorkflowEnqueueResponse,
+    status_code=202,
+    dependencies=[Depends(enforce_sensitive_rate_limit)],
+)
 async def run_workflow(
     workflow_id: UUID,
     session: SessionDependency,
-    llm_client: Annotated[LLMClient, Depends(get_llm_client)],
-) -> WorkflowRun:
-    return await CampaignWorkflow(session, llm_client).run_to_pending_approval(
-        workflow_id
+) -> WorkflowEnqueueResponse:
+    await WorkflowService(session).get_workflow(workflow_id)
+    job = await JobQueue(session).enqueue(
+        JobType.WORKFLOW_RUN,
+        WorkflowRunJobPayload(workflow_id=workflow_id),
+        created_by="workflow-api",
+        idempotency_key=JobQueue.build_idempotency_key(
+            JobType.WORKFLOW_RUN, {"workflow_id": str(workflow_id)}
+        ),
+    )
+    return WorkflowEnqueueResponse(
+        job_id=job.job_id,
+        workflow_id=workflow_id,
+        status=job.status,
+        status_url=f"/jobs/{job.job_id}",
+        correlation_id=job.correlation_id,
     )

@@ -8,8 +8,7 @@ from app.core.config import get_settings
 from app.core.constants import UserRole
 from app.core.exceptions import AuthenticationError
 from app.database.session import get_session
-from app.llm.mock_client import MockLLMClient
-from app.llm.openai_client import OpenAILLMClient
+from app.llm.factory import build_llm_client
 from app.service.auth_service import AuthService, AuthenticatedActor
 
 SessionDependency = Annotated[AsyncSession, Depends(get_session)]
@@ -18,10 +17,7 @@ bearer_scheme = HTTPBearer(auto_error=False)
 
 
 def get_llm_client():
-    settings = get_settings()
-    if settings.llm_provider == "mock":
-        return MockLLMClient()
-    return OpenAILLMClient(settings)
+    return build_llm_client(get_settings())
 
 
 async def get_current_actor(

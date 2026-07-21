@@ -27,6 +27,7 @@ from app.core.exceptions import (
 )
 from app.core.sanitization import sanitize_json, sanitize_text
 from app.database.m5_integrity import is_action_request_duplicate
+from app.observability.metrics import ACTION_APPROVAL_DURATION, ACTION_REQUESTS
 from app.repositories.action_execution_repository import ActionExecutionRepository
 from app.repositories.action_request_repository import ActionRequestRepository
 from app.schemas.action_execution import ActionExecutionRead
@@ -148,6 +149,8 @@ class ActionService:
             await self.session.commit()
             return await self._proposal_result(duplicate.action_request_id)
 
+        ACTION_REQUESTS.labels(model.action_name, model.status).inc()
+
         await self.memories.record_event(
             campaign_id=model.campaign_id,
             workflow_id=model.workflow_id,
@@ -216,6 +219,10 @@ class ActionService:
             raise ActionVersionConflictError("Action request version is stale")
         await self.session.commit()
         result = await self.get(action_request_id)
+        if result.approved_at is not None:
+            ACTION_APPROVAL_DURATION.labels(result.action_name).observe(
+                max((result.approved_at - result.requested_at).total_seconds(), 0)
+            )
         await self.memories.record_event(
             campaign_id=result.campaign_id,
             workflow_id=result.workflow_id,

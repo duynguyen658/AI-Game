@@ -13,6 +13,8 @@ from app.core.exceptions import (
     AgentContextError,
     AgentRunNotFoundError,
 )
+from app.observability.metrics import POLICY_DECISIONS
+from app.observability.tracing import traced_operation
 from app.repositories.action_request_repository import ActionRequestRepository
 from app.repositories.agent_run_repository import AgentRunRepository
 from app.repositories.campaign_repository import CampaignRepository
@@ -77,8 +79,16 @@ class PolicyService:
             previous_action_count=len(existing),
         )
         definition = self._definition(proposal.action_name)
-        result = self.engine.evaluate(context, definition)
+        with traced_operation(
+            "policy.evaluate",
+            action_name=proposal.action_name,
+            agent_name=agent_name.value,
+        ):
+            result = self.engine.evaluate(context, definition)
         await self.session.commit()
+        POLICY_DECISIONS.labels(
+            result.decision.value, definition.name if definition else "unknown"
+        ).inc()
         return result, definition, context
 
     def _definition(self, action_name: str) -> ActionDefinition | None:

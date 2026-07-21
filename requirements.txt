@@ -5,7 +5,7 @@ pydantic-settings
 httpx
 openai
 tenacity
-python-jose[cryptography]
+PyJWT[crypto]
 bcrypt
 python-multipart
 email-validator
@@ -13,10 +13,5 @@ sqlalchemy
 asyncpg
 alembic
 structlog
-pytest
-pytest-asyncio
-pytest-cov
-respx
-ruff
-mypy
-bandit
+prometheus-client
+opentelemetry-api
