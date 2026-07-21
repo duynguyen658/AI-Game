@@ -161,9 +161,17 @@ async def test_agent_run_api_requires_auth_and_enforces_viewer_roles(
         ).status_code == 403
 
     headers = {"x-actor-id": "reviewer-1", "x-actor-role": "reviewer"}
-    for route in routes:
+    reviewer_allowed = [
+        f"/agent-runs/{run_id}",
+        f"/workflows/{workflow.workflow_id}/agent-runs",
+        f"/campaigns/{campaign_id}/agent-runs",
+    ]
+    for route in reviewer_allowed:
         response = await api_client.get(route, headers=headers)
         assert response.status_code == 200
+
+    for route in ["/agent-runs", f"/agent-runs/{run_id}/tool-calls"]:
+        assert (await api_client.get(route, headers=headers)).status_code == 403
         body = response.json()
         serialized = str(body).lower()
         assert "system_prompt" not in serialized
@@ -171,7 +179,10 @@ async def test_agent_run_api_requires_auth_and_enforces_viewer_roles(
         assert "provider_payload" not in serialized
         assert "super-secret" not in serialized
 
-    page = await api_client.get("/agent-runs?limit=1&offset=1", headers=headers)
+    page = await api_client.get(
+        "/agent-runs?limit=1&offset=1",
+        headers={"x-actor-id": "manager-1", "x-actor-role": "manager"},
+    )
     assert page.status_code == 200
     assert len(page.json()) == 1
     assert (

@@ -15,6 +15,7 @@ from app.database.models import N8NWebhookReceiptModel
 from app.integrations.n8n.schemas import (
     N8NCampaignRequest,
     N8NFileTaskRequest,
+    N8NDeliveryRead,
     N8NOutboundEnvelope,
     N8NWebhookResponse,
 )
@@ -36,6 +37,28 @@ class N8NService:
         self.session = session
         self.settings = settings or get_settings()
         self.repository = N8NRepository(session)
+
+    async def list_deliveries(
+        self, *, limit: int = 20, offset: int = 0, endpoint: str | None = None
+    ) -> list[N8NDeliveryRead]:
+        receipts = await self.repository.list(
+            limit=min(max(limit, 1), 100),
+            offset=max(offset, 0),
+            endpoint=endpoint,
+        )
+        return [
+            N8NDeliveryRead(
+                receipt_id=receipt.receipt_id,
+                endpoint=receipt.endpoint,
+                correlation_id=receipt.correlation_id,
+                response_status=receipt.response_status,
+                resource_type=receipt.response_body.get("resource_type"),
+                resource_id=receipt.response_body.get("resource_id"),
+                job_id=receipt.response_body.get("job_id"),
+                received_at=receipt.received_at,
+            )
+            for receipt in receipts
+        ]
 
     async def accept_campaign(
         self,
@@ -72,7 +95,7 @@ class N8NService:
         campaigns = CampaignRepository(self.session)
         if await campaigns.exists(payload.campaign.campaign_id):
             raise M7ConflictError("Campaign already exists")
-        campaign = await campaigns.create(payload.campaign)
+        campaign = await campaigns.create(payload.campaign, created_by="n8n-webhook")
         workflow = await WorkflowRepository(self.session).create(
             campaign_id=payload.campaign.campaign_id,
             parent_workflow_id=None,

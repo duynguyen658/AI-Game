@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
@@ -22,6 +24,19 @@ class N8NWebhookResponse(BaseModel):
     resource_type: str
     resource_id: str
     job_id: str | None = None
+
+
+class N8NDeliveryRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    receipt_id: UUID
+    endpoint: str
+    correlation_id: str
+    response_status: int
+    resource_type: str | None = None
+    resource_id: str | None = None
+    job_id: str | None = None
+    received_at: datetime
 
 
 class N8NFileTaskRequest(BaseModel):

@@ -19,7 +19,7 @@ router = APIRouter(tags=["Applied AI - Providers"])
 
 @router.get("/providers", response_model=list[ProviderCatalogItem])
 async def provider_catalog(
-    _: Annotated[AuthenticatedActor, Depends(get_current_actor)],
+    actor: Annotated[AuthenticatedActor, Depends(get_current_actor)],
 ) -> list[ProviderCatalogItem]:
     return [
         ProviderCatalogItem.model_validate(item)
@@ -42,10 +42,11 @@ async def create_provider_comparison(
 @router.get("/provider-comparisons", response_model=list[ProviderComparisonRead])
 async def list_provider_comparisons(
     session: SessionDependency,
-    _: Annotated[AuthenticatedActor, Depends(get_current_actor)],
+    actor: Annotated[AuthenticatedActor, Depends(get_current_actor)],
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> list[ProviderComparisonRead]:
+    AuthService().require_operator(actor)
     return await ProviderComparisonService(session).list(limit=limit, offset=offset)
 
 
@@ -55,8 +56,9 @@ async def list_provider_comparisons(
 async def get_provider_comparison(
     comparison_id: UUID,
     session: SessionDependency,
-    _: Annotated[AuthenticatedActor, Depends(get_current_actor)],
+    actor: Annotated[AuthenticatedActor, Depends(get_current_actor)],
 ) -> ProviderComparisonRead:
+    AuthService().require_operator(actor)
     return await ProviderComparisonService(session).get(comparison_id)
 
 
@@ -97,6 +99,7 @@ async def cancel_provider_comparison(
 async def get_provider_comparison_results(
     comparison_id: UUID,
     session: SessionDependency,
-    _: Annotated[AuthenticatedActor, Depends(get_current_actor)],
+    actor: Annotated[AuthenticatedActor, Depends(get_current_actor)],
 ) -> list[ProviderComparisonCaseRead]:
+    AuthService().require_operator(actor)
     return await ProviderComparisonService(session).results(comparison_id)

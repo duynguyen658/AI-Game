@@ -11,7 +11,7 @@ from app.schemas.prompt import (
     PromptExperimentRead,
     PromptExperimentRun,
 )
-from app.service.auth_service import AuthenticatedActor
+from app.service.auth_service import AuthService, AuthenticatedActor
 
 router = APIRouter(
     prefix="/prompt-experiments", tags=["Applied AI - Prompt Experiments"]
@@ -21,10 +21,11 @@ router = APIRouter(
 @router.get("", response_model=list[PromptExperimentRead])
 async def list_prompt_experiments(
     session: SessionDependency,
-    _: Annotated[AuthenticatedActor, Depends(get_current_actor)],
+    actor: Annotated[AuthenticatedActor, Depends(get_current_actor)],
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> list[PromptExperimentRead]:
+    AuthService().require_operator(actor)
     return await PromptService(session).list_experiments(limit=limit, offset=offset)
 
 
@@ -41,8 +42,9 @@ async def create_prompt_experiment(
 async def get_prompt_experiment(
     experiment_id: UUID,
     session: SessionDependency,
-    _: Annotated[AuthenticatedActor, Depends(get_current_actor)],
+    actor: Annotated[AuthenticatedActor, Depends(get_current_actor)],
 ) -> PromptExperimentRead:
+    AuthService().require_operator(actor)
     return await PromptService(session).get_experiment(experiment_id)
 
 
@@ -50,8 +52,9 @@ async def get_prompt_experiment(
 async def get_prompt_experiment_results(
     experiment_id: UUID,
     session: SessionDependency,
-    _: Annotated[AuthenticatedActor, Depends(get_current_actor)],
+    actor: Annotated[AuthenticatedActor, Depends(get_current_actor)],
 ) -> list[PromptExperimentCaseRead]:
+    AuthService().require_operator(actor)
     return await PromptService(session).experiment_cases(experiment_id)
 
 

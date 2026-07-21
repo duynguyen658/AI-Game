@@ -13,19 +13,10 @@ from app.jobs.queue import JobQueue
 from app.operations.audit import record_operator_action
 from app.operations.rate_limit import enforce_sensitive_rate_limit
 from app.schemas.job import JobRead, JobStatusRead
+from app.security.resource_access import ResourceAccessService
 from app.service.auth_service import AuthService, AuthenticatedActor
 
 router = APIRouter(prefix="/jobs", tags=["Operations - Jobs"])
-
-USER_VISIBLE_JOB_TYPES = {
-    JobType.WORKFLOW_RUN,
-    JobType.PROMPT_EXPERIMENT_RUN,
-    JobType.PROVIDER_COMPARISON_RUN,
-    JobType.IMAGE_GENERATION,
-    JobType.DATA_ANALYSIS,
-    JobType.DOCUMENT_PROCESSING,
-    JobType.VIDEO_STORYBOARD,
-}
 
 
 @router.get("", response_model=list[JobRead])
@@ -49,7 +40,7 @@ async def get_job(
     session: SessionDependency,
     actor: Annotated[AuthenticatedActor, Depends(get_current_actor)],
 ) -> JobRead:
-    AuthService().require_operator(actor)
+    await ResourceAccessService(session).require_job_access(actor, job_id)
     return await JobQueue(session).get(job_id)
 
 
@@ -59,9 +50,8 @@ async def get_user_job_status(
     session: SessionDependency,
     actor: Annotated[AuthenticatedActor, Depends(get_current_actor)],
 ) -> JobStatusRead:
+    await ResourceAccessService(session).require_job_access(actor, job_id)
     job = await JobQueue(session).get(job_id)
-    if job.job_type not in USER_VISIBLE_JOB_TYPES:
-        AuthService().require_operator(actor)
     return JobStatusRead.model_validate(
         job.model_dump(include=set(JobStatusRead.model_fields))
     )

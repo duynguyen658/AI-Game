@@ -46,7 +46,9 @@ async def api_client() -> AsyncIterator[AsyncClient]:
     from app.main import app
 
     async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://testserver"
+        transport=ASGITransport(app=app),
+        base_url="http://testserver",
+        headers={"x-actor-id": "marketing-1", "x-actor-role": "marketing"},
     ) as client:
         yield client
 
@@ -76,7 +78,9 @@ async def test_health_metrics_operator_authorization_and_lifecycles(
     assert metrics.status_code == 200
     assert "http_requests_total" in metrics.text
 
-    assert (await api_client.get("/jobs")).status_code == 401
+    assert (
+        await api_client.get("/jobs", headers={"x-actor-id": "", "x-actor-role": ""})
+    ).status_code == 401
     assert (
         await api_client.get(
             "/jobs", headers={"x-actor-id": "reviewer-1", "x-actor-role": "reviewer"}
@@ -106,7 +110,12 @@ async def test_health_metrics_operator_authorization_and_lifecycles(
     assert queued.status_code == 202
     job_id = queued.json()["job_id"]
     assert queued.json()["status_url"] == f"/jobs/{job_id}/status"
-    assert (await api_client.get(f"/jobs/{job_id}/status")).status_code == 401
+    assert (
+        await api_client.get(
+            f"/jobs/{job_id}/status",
+            headers={"x-actor-id": "", "x-actor-role": ""},
+        )
+    ).status_code == 401
     safe_status = await api_client.get(
         f"/jobs/{job_id}/status",
         headers={"x-actor-id": "marketing-1", "x-actor-role": "marketing"},
@@ -154,7 +163,10 @@ async def test_health_metrics_operator_authorization_and_lifecycles(
     )
     assert user_timeline.status_code == 200
     assert (
-        await api_client.get(f"/operations/workflows/{workflow_id}/timeline")
+        await api_client.get(
+            f"/operations/workflows/{workflow_id}/timeline",
+            headers={"x-actor-id": "", "x-actor-role": ""},
+        )
     ).status_code == 401
 
     dataset = await api_client.post(

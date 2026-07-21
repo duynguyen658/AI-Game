@@ -25,6 +25,7 @@ class CampaignService:
         self,
         payload: CampaignCreate,
         *,
+        created_by: str = "system",
         evaluation_run_id: UUID | None = None,
         evaluation_case_id: UUID | None = None,
     ) -> CampaignRecord:
@@ -33,6 +34,7 @@ class CampaignService:
         try:
             model = await self.repository.create(
                 payload,
+                created_by=created_by,
                 evaluation_run_id=evaluation_run_id,
                 evaluation_case_id=evaluation_case_id,
             )
@@ -57,6 +59,8 @@ class CampaignService:
         limit: int = 20,
         offset: int = 0,
         status: CampaignStatus | None = None,
+        owner_id: str | None = None,
+        reviewable_only: bool = False,
     ) -> list[CampaignRecord]:
         bounded_limit = min(max(limit, 1), 100)
         bounded_offset = max(offset, 0)
@@ -64,6 +68,8 @@ class CampaignService:
             limit=bounded_limit,
             offset=bounded_offset,
             status=status,
+            owner_id=owner_id,
+            reviewable_only=reviewable_only,
         )
         return [campaign_to_record(model) for model in models]
 

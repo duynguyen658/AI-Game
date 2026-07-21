@@ -103,6 +103,24 @@ class WorkflowService:
             raise WorkflowNotFoundError("Workflow not found")
         return workflow_to_schema(workflow)
 
+    async def list_workflows(
+        self,
+        *,
+        limit: int = 20,
+        offset: int = 0,
+        campaign_id: str | None = None,
+        owner_id: str | None = None,
+        reviewable_only: bool = False,
+    ) -> list[WorkflowRun]:
+        workflows = await self.workflow_repository.list_accessible(
+            limit=min(max(limit, 1), 100),
+            offset=max(offset, 0),
+            campaign_id=campaign_id,
+            owner_id=owner_id,
+            reviewable_only=reviewable_only,
+        )
+        return [workflow_to_schema(workflow) for workflow in workflows]
+
     async def transition(
         self,
         workflow_id: UUID,

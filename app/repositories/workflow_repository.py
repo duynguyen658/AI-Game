@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import Select, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import (
@@ -12,7 +12,7 @@ from app.core.constants import (
     CampaignStatus,
     WorkflowStep,
 )
-from app.database.models import WorkflowRunModel
+from app.database.models import CampaignModel, WorkflowRunModel
 
 
 class WorkflowRepository:
@@ -93,6 +93,42 @@ class WorkflowRepository:
             select(WorkflowRunModel)
             .where(WorkflowRunModel.campaign_id == campaign_id)
             .order_by(WorkflowRunModel.started_at.desc())
+        )
+        return result.scalars().all()
+
+    async def list_accessible(
+        self,
+        *,
+        limit: int,
+        offset: int,
+        campaign_id: str | None = None,
+        owner_id: str | None = None,
+        reviewable_only: bool = False,
+    ) -> Sequence[WorkflowRunModel]:
+        statement: Select[tuple[WorkflowRunModel]] = select(WorkflowRunModel).join(
+            CampaignModel, CampaignModel.campaign_id == WorkflowRunModel.campaign_id
+        )
+        statement = statement.where(WorkflowRunModel.is_evaluation.is_(False))
+        if campaign_id is not None:
+            statement = statement.where(WorkflowRunModel.campaign_id == campaign_id)
+        if owner_id is not None:
+            statement = statement.where(CampaignModel.created_by == owner_id)
+        if reviewable_only:
+            statement = statement.where(
+                CampaignModel.status.in_(
+                    [
+                        CampaignStatus.REVIEWING.value,
+                        CampaignStatus.MANUAL_REVIEW_REQUIRED.value,
+                        CampaignStatus.PENDING_APPROVAL.value,
+                    ]
+                )
+            )
+        result = await self.session.execute(
+            statement.order_by(
+                WorkflowRunModel.started_at.desc(), WorkflowRunModel.workflow_id
+            )
+            .offset(offset)
+            .limit(limit)
         )
         return result.scalars().all()
 

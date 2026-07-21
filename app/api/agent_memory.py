@@ -10,6 +10,7 @@ from app.core.constants import MemoryEventType
 from app.schemas.memory_entry import MemoryEntryRead
 from app.service.auth_service import AuthenticatedActor, AuthService
 from app.service.memory_service import MemoryService
+from app.security.resource_access import ResourceAccessService
 
 router = APIRouter(tags=["Agent Memory"])
 
@@ -24,6 +25,7 @@ async def list_campaign_memories(
     event_type: MemoryEventType | None = None,
 ) -> list[MemoryEntryRead]:
     AuthService().require_action_read(actor)
+    await ResourceAccessService(session).require_campaign_access(actor, campaign_id)
     return await MemoryService(session).list_campaign(
         campaign_id,
         limit=limit,
@@ -42,6 +44,7 @@ async def list_workflow_memories(
     event_type: MemoryEventType | None = None,
 ) -> list[MemoryEntryRead]:
     AuthService().require_action_read(actor)
+    await ResourceAccessService(session).require_workflow_access(actor, workflow_id)
     return await MemoryService(session).list_workflow(
         workflow_id,
         limit=limit,

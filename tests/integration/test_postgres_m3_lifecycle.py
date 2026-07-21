@@ -115,6 +115,7 @@ async def api_client() -> AsyncIterator[AsyncClient]:
         async with AsyncClient(
             transport=transport,
             base_url="http://testserver",
+            headers={"x-actor-id": "marketing-1", "x-actor-role": "marketing"},
         ) as client:
             yield client
     finally:
@@ -416,7 +417,11 @@ async def test_e2e_approval_lifecycle() -> None:
     from app.main import app
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://testserver",
+        headers={"x-actor-id": "marketing-1", "x-actor-role": "marketing"},
+    ) as client:
         campaign_response = await client.post(
             "/campaigns",
             json=campaign_payload("CL-E2E-1"),
@@ -1133,6 +1138,7 @@ async def test_api_campaign_workflow_approval_and_error_responses(
             "decision": ApprovalDecision.APPROVE,
             "expected_version": 1,
         },
+        headers={"x-actor-id": "", "x-actor-role": ""},
     )
     assert unauthenticated.status_code == 401
 
@@ -1332,6 +1338,11 @@ async def test_agentic_happy_path_persists_runs_tools_and_query_api(
     assert len(response.json()) == 3
     response = await api_client.get(
         f"/agent-runs/{runs[1].agent_run_id}/tool-calls", headers=audit_headers
+    )
+    assert response.status_code == 403
+    response = await api_client.get(
+        f"/agent-runs/{runs[1].agent_run_id}/tool-calls",
+        headers={"x-actor-id": "manager-1", "x-actor-role": "manager"},
     )
     assert response.status_code == 200
     assert len(response.json()) == 1

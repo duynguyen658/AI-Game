@@ -54,6 +54,7 @@ class CampaignModel(Base):
             name="ck_campaign_quality_score_range",
         ),
         Index("ix_campaigns_status_created_at", "status", "created_at"),
+        Index("ix_campaigns_owner_created_at", "created_by", "created_at"),
         Index("ix_campaigns_evaluation_owner", "is_evaluation", "evaluation_run_id"),
     )
 
@@ -68,6 +69,7 @@ class CampaignModel(Base):
     launch_date: Mapped[date] = mapped_column(Date, nullable=False)
     promotion: Mapped[str] = mapped_column(Text, nullable=False)
     raw_brief: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[str] = mapped_column(String(200), nullable=False)
     status: Mapped[str] = mapped_column(
         String(50),
         nullable=False,
