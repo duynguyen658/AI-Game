@@ -4,7 +4,7 @@ import { ApiError, isApiError } from "@/lib/api/errors";
 
 export function LoadingState({ label = "Loading data" }: { label?: string }) {
   return (
-    <div className="space-y-3" aria-busy="true" aria-label={label}>
+    <div className="space-y-3" role="status" aria-live="polite" aria-busy="true" aria-label={label}>
       <div className="h-10 animate-pulse rounded-md bg-black/6" />
       <div className="h-10 animate-pulse rounded-md bg-black/6" />
       <div className="h-10 animate-pulse rounded-md bg-black/6" />
