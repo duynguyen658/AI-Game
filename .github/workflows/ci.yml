@@ -108,7 +108,7 @@ jobs:
         run: docker run --rm cyber-legends-worker:${{ github.sha }} python -c "from app.jobs.handlers import build_job_handlers; from app.database.session import AsyncSessionLocal; assert len(build_job_handlers(AsyncSessionLocal)) == 6"
 
       - name: Scan API image
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: cyber-legends-api:${{ github.sha }}
           format: table
@@ -116,7 +116,7 @@ jobs:
           severity: CRITICAL,HIGH
 
       - name: Scan worker image
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: cyber-legends-worker:${{ github.sha }}
           format: table
