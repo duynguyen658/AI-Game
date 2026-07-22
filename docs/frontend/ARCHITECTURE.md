@@ -1,6 +1,6 @@
 # Frontend Architecture
 
-M8 is a Next.js App Router application in `frontend/`. Server components protect workspace routes and read an encrypted, expiring HttpOnly session. Client components own forms, TanStack Query caches, polling, tables, charts, and human decisions.
+M8 is a Next.js App Router application in `frontend/`. Server components protect workspace routes and read an opaque, expiring HttpOnly session. Client components own forms, TanStack Query caches, polling, tables, charts, and human decisions.
 
 ```text
 Browser -> Next.js session/BFF routes -> FastAPI -> service/repository -> PostgreSQL
@@ -11,4 +11,6 @@ The browser calls only `/api/backend/*`. In OIDC mode, the BFF loads the server-
 
 Generated types in `frontend/generated/openapi.ts` come from the committed `openapi.m8.json`. Domain API modules translate route details into stable frontend calls. Async workflows retain backend job IDs and poll the safe status endpoint until a terminal state. Campaign timelines and review records remain backend authoritative.
 
-Authentication is isolated behind `AuthAdapter`. `DemoAuthAdapter` is limited to the explicit demo deployment. `OidcAuthAdapter` performs discovery, Authorization Code flow, PKCE/state/nonce validation, server-side refresh, and provider logout without exposing tokens to client JavaScript. FastAPI remains the final authentication and resource-authorization boundary.
+Authentication is isolated behind `AuthAdapter`. `DemoAuthAdapter` is limited to the explicit demo deployment. `OidcAuthAdapter` performs discovery, Authorization Code flow, PKCE/state/nonce validation, server-side refresh, and provider logout without exposing tokens to client JavaScript. Production OIDC cookies contain only a random session ID; PostgreSQL stores its SHA-256 hash and an AES-256-GCM encrypted token payload. `accessTokenExpiresAt` is independent from the fixed `sessionExpiresAt`, so access-token expiration does not end an active session.
+
+Refresh uses a bounded single-flight in each frontend process and a PostgreSQL refresh claim plus `sessionVersion` compare-and-swap across processes. One caller rotates the refresh token; waiters reuse the winning payload and stale updates are rejected. The absolute session expiry never slides. FastAPI remains the final authentication and resource-authorization boundary.

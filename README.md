@@ -193,6 +193,7 @@ docker compose -f docker-compose.production.yml up --build
 ```
 
 Production requires explicit PostgreSQL/JWT values plus `SESSION_SECRET`,
+`OIDC_SESSION_ENCRYPTION_KEY`, `OIDC_SESSION_STORAGE=postgres`,
 `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_REDIRECT_URI`, and
 `OIDC_POST_LOGOUT_REDIRECT_URI`. The frontend uses the internal
 `BACKEND_API_URL=http://api:8000`; the API is not published directly by the production
@@ -206,10 +207,16 @@ configuration:
 docker compose -f docker-compose.demo.yml up -d --build
 ```
 
-M8 provides the Next.js operations workspace, a server-side OIDC adapter, encrypted
-HttpOnly sessions, a streaming BFF, owner-filtered collection APIs, and backend
+M8 provides the Next.js operations workspace, a server-side OIDC adapter, opaque
+HttpOnly sessions backed by encrypted PostgreSQL records, a streaming BFF, owner-filtered collection APIs, and backend
 resource authorization. See `docs/frontend/SECURITY_MODEL.md`,
 `docs/frontend/DEPLOYMENT_GUIDE.md`, and `docs/frontend/E2E_GUIDE.md`.
+
+OIDC access-token expiration is independent from the fixed 10-hour session lifetime.
+The BFF refreshes near-expiry or expired access tokens while the absolute session is
+valid, atomically persists refresh-token rotation, and never exposes tokens to browser
+JavaScript. Production cookies contain only a random opaque ID and are capped by
+`AUTH_COOKIE_MAX_BYTES` (default `3800`).
 
 ## Agent Runtime
 

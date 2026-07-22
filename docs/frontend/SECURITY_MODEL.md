@@ -12,6 +12,8 @@ Business timelines omit tool calls, memory records, policy details, metadata, an
 
 ## Session and upload controls
 
-OIDC uses Authorization Code with PKCE, state, and nonce through `openid-client`. Session payloads use AES-256-GCM, expire, and are stored in `Secure`, `HttpOnly`, `SameSite=Lax` cookies. Tokens are never placed in localStorage, returned by an API route, or logged.
+OIDC uses Authorization Code with PKCE, state, and nonce through `openid-client`. Production uses `OIDC_SESSION_STORAGE=postgres`: the `Secure`, `HttpOnly`, `SameSite=Lax` cookie contains only a 256-bit random ID, PostgreSQL stores only its hash, and access, refresh, and ID tokens are encrypted at rest with AES-256-GCM. Tokens are never placed in localStorage, returned by an API route, or logged.
+
+The access token has its provider lifetime; the authenticated session has a separate fixed 10-hour maximum. Refresh begins 90 seconds before access expiry and remains possible after access expiry while the absolute session is valid. Rotation is persisted by refresh claim and version compare-and-swap. Invalid grants, malformed responses, unavailable providers, expired sessions, and revoked records clear local authentication and produce a stable 401 without forwarding a stale token. `AUTH_COOKIE_MAX_BYTES=3800` is enforced before every cookie is emitted; opaque production cookies remain far below it.
 
 The BFF checks declared length and counts every streamed byte. JSON and multipart limits are separate, malformed or understated lengths cannot bypass the stream counter, cancellation propagates upstream, and complete request bodies are not allocated. Ingress, BFF, and backend limits must be configured as one documented policy.
