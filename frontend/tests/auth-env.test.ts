@@ -18,6 +18,8 @@ function productionOidcEnv() {
   vi.stubEnv("OIDC_REDIRECT_URI", "https://app.test/api/auth/callback");
   vi.stubEnv("FRONTEND_DATABASE_URL", "postgresql://user:password@db/session");
   vi.stubEnv("OIDC_TEST_ISSUER_ENABLED", "false");
+  vi.stubEnv("OIDC_SESSION_MAX_AGE_SECONDS", "36000");
+  vi.stubEnv("OIDC_REFRESH_SKEW_SECONDS", "90");
 }
 
 describe("OIDC session environment", () => {
