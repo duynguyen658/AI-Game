@@ -168,6 +168,7 @@ jobs:
         working-directory: frontend
         env:
           RUN_POSTGRES_OIDC_TESTS: "1"
+          OIDC_TEST_ISSUER_ENABLED: "false"
         run: pnpm test:auth
       - name: Deterministic OIDC browser login refresh rotation and logout
         run: |

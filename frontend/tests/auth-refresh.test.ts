@@ -79,6 +79,7 @@ describe("OIDC access-token resolution", () => {
     vi.stubEnv("OIDC_SESSION_ENCRYPTION_KEY", "unit-test-oidc-encryption-key-at-least-32-characters");
     vi.stubEnv("OIDC_SESSION_STORAGE", "cookie");
     vi.stubEnv("OIDC_REFRESH_SKEW_SECONDS", "90");
+    vi.stubEnv("OIDC_TEST_ISSUER_ENABLED", "false");
   });
 
   it("returns a token that is valid beyond refresh skew", async () => {
