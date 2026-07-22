@@ -86,9 +86,16 @@ services:
     restart: unless-stopped
     environment:
       BACKEND_API_URL: http://api:8000
+      FRONTEND_DATABASE_URL: postgresql://${POSTGRES_USER:?required}:${POSTGRES_PASSWORD:?required}@postgres:5432/${POSTGRES_DB:?required}
       AUTH_MODE: oidc
       DEMO_AUTH_ENABLED: "false"
       SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET is required}
+      OIDC_SESSION_STORAGE: ${OIDC_SESSION_STORAGE:-postgres}
+      OIDC_SESSION_ENCRYPTION_KEY: ${OIDC_SESSION_ENCRYPTION_KEY:?OIDC_SESSION_ENCRYPTION_KEY is required}
+      OIDC_SESSION_MAX_AGE_SECONDS: ${OIDC_SESSION_MAX_AGE_SECONDS:-36000}
+      OIDC_REFRESH_SKEW_SECONDS: ${OIDC_REFRESH_SKEW_SECONDS:-90}
+      AUTH_COOKIE_MAX_BYTES: ${AUTH_COOKIE_MAX_BYTES:-3800}
+      OIDC_TEST_ISSUER_ENABLED: "false"
       OIDC_ISSUER: ${OIDC_ISSUER:?OIDC_ISSUER is required}
       OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:?OIDC_CLIENT_ID is required}
       OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:?OIDC_CLIENT_SECRET is required}
@@ -102,6 +109,8 @@ services:
       - "${FRONTEND_PORT:-3000}:3000"
     depends_on:
       api:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     stop_grace_period: 20s
 

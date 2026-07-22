@@ -1,19 +1,37 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { cookies } from "next/headers";
-import { isUserRole, type SessionUser } from "./types";
-import { getAuthMode, requireServerEnv, type AuthMode } from "@/lib/env/server";
+import { getAuthMode } from "@/lib/env/server";
 import { shouldUseSecureCookies } from "./cookie-policy";
+import { seal, unseal } from "./crypto";
+import { isUserRole, type SessionUser } from "./types";
 
 export const SESSION_COOKIE = "cl_session";
 export const OIDC_TRANSACTION_COOKIE = "cl_oidc_transaction";
 
-export type AuthenticatedSession = SessionUser & {
-  mode: AuthMode;
-  expiresAt: number;
-  accessToken?: string;
+export type AuthenticatedSession = {
+  actor: {
+    id: string;
+    role: SessionUser["role"];
+    displayName?: string;
+    email?: string;
+  };
+  accessToken: string;
   refreshToken?: string;
   idToken?: string;
+  accessTokenExpiresAt: number;
+  sessionExpiresAt: number;
+  createdAt: number;
+  refreshedAt?: number;
+  provider: "oidc";
+  sessionVersion: number;
 };
+
+export type DemoSession = SessionUser & {
+  mode: "demo";
+  sessionExpiresAt: number;
+  createdAt: number;
+};
+
+export type PublicSession = SessionUser & { mode: "demo" | "oidc"; sessionExpiresAt: number };
 
 export type OidcTransaction = {
   state: string;
@@ -22,73 +40,47 @@ export type OidcTransaction = {
   expiresAt: number;
 };
 
-function encryptionKey() {
-  const configured =
-    process.env.SESSION_SECRET ??
-    (process.env.NODE_ENV === "production"
-      ? requireServerEnv("SESSION_SECRET")
-      : "local-development-session-secret-not-for-production");
-  if (configured.length < 32) throw new Error("SESSION_SECRET must be at least 32 characters");
-  return createHash("sha256").update(configured).digest();
+export function isAuthenticatedSession(value: unknown): value is AuthenticatedSession {
+  const parsed = value as Partial<AuthenticatedSession> | null;
+  return Boolean(
+    parsed &&
+    parsed.provider === "oidc" &&
+    typeof parsed.actor?.id === "string" &&
+    isUserRole(parsed.actor.role) &&
+    typeof parsed.accessToken === "string" &&
+    parsed.accessToken.length > 0 &&
+    typeof parsed.accessTokenExpiresAt === "number" &&
+    typeof parsed.sessionExpiresAt === "number" &&
+    typeof parsed.createdAt === "number" &&
+    Number.isInteger(parsed.sessionVersion) &&
+    parsed.sessionVersion! >= 1
+  );
 }
 
-function encrypt(value: object) {
-  const iv = randomBytes(12);
-  const cipher = createCipheriv("aes-256-gcm", encryptionKey(), iv);
-  const ciphertext = Buffer.concat([
-    cipher.update(JSON.stringify(value), "utf8"),
-    cipher.final(),
-  ]);
-  return [iv, cipher.getAuthTag(), ciphertext]
-    .map((part) => part.toString("base64url"))
-    .join(".");
+export function encodeSession(session: DemoSession) {
+  return seal(session, "SESSION_SECRET");
 }
 
-function decrypt<T>(value: string | undefined): T | null {
-  if (!value) return null;
-  try {
-    const [ivValue, tagValue, ciphertextValue] = value.split(".");
-    if (!ivValue || !tagValue || !ciphertextValue) return null;
-    const decipher = createDecipheriv(
-      "aes-256-gcm",
-      encryptionKey(),
-      Buffer.from(ivValue, "base64url"),
-    );
-    decipher.setAuthTag(Buffer.from(tagValue, "base64url"));
-    const plaintext = Buffer.concat([
-      decipher.update(Buffer.from(ciphertextValue, "base64url")),
-      decipher.final(),
-    ]).toString("utf8");
-    return JSON.parse(plaintext) as T;
-  } catch {
-    return null;
-  }
-}
-
-export function encodeSession(session: AuthenticatedSession) {
-  return encrypt(session);
-}
-
-export function decodeSession(value: string | undefined): AuthenticatedSession | null {
-  const parsed = decrypt<Partial<AuthenticatedSession>>(value);
+export function decodeSession(value: string | undefined, now = Math.floor(Date.now() / 1000)): DemoSession | null {
+  const parsed = unseal<Partial<DemoSession> & { expiresAt?: number }>(value, "SESSION_SECRET");
   if (
     !parsed ||
+    parsed.mode !== "demo" ||
     typeof parsed.actorId !== "string" ||
     typeof parsed.displayName !== "string" ||
     !isUserRole(parsed.role) ||
-    (parsed.mode !== "demo" && parsed.mode !== "oidc") ||
-    typeof parsed.expiresAt !== "number" ||
-    parsed.expiresAt <= Math.floor(Date.now() / 1000)
+    typeof parsed.sessionExpiresAt !== "number" ||
+    parsed.sessionExpiresAt <= now
   ) return null;
-  return parsed as AuthenticatedSession;
+  return parsed as DemoSession;
 }
 
 export function encodeOidcTransaction(transaction: OidcTransaction) {
-  return encrypt(transaction);
+  return seal(transaction, "SESSION_SECRET");
 }
 
 export function decodeOidcTransaction(value: string | undefined): OidcTransaction | null {
-  const parsed = decrypt<Partial<OidcTransaction>>(value);
+  const parsed = unseal<Partial<OidcTransaction>>(value, "SESSION_SECRET");
   if (
     !parsed ||
     typeof parsed.state !== "string" ||
@@ -100,8 +92,22 @@ export function decodeOidcTransaction(value: string | undefined): OidcTransactio
   return parsed as OidcTransaction;
 }
 
-export async function getSession() {
-  return decodeSession((await cookies()).get(SESSION_COOKIE)?.value);
+export function toPublicSession(session: AuthenticatedSession): PublicSession {
+  return {
+    actorId: session.actor.id,
+    role: session.actor.role,
+    displayName: session.actor.displayName ?? session.actor.email ?? session.actor.id,
+    mode: "oidc",
+    sessionExpiresAt: session.sessionExpiresAt,
+  };
+}
+
+export async function getSession(): Promise<PublicSession | null> {
+  const value = (await cookies()).get(SESSION_COOKIE)?.value;
+  if (getAuthMode() === "demo") return decodeSession(value);
+  const { getOidcSessionStore } = await import("./session-store");
+  const stored = await getOidcSessionStore().readSession(value);
+  return stored.outcome === "FOUND" ? toPublicSession(stored.session) : null;
 }
 
 export function demoAuthEnabled() {
