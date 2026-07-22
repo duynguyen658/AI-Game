@@ -102,6 +102,94 @@ jobs:
         if: always()
         run: docker compose -f docker-compose.demo.yml down -v
 
+  production-auth:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: cyber_legends_oidc
+          POSTGRES_USER: cyber_legends
+          POSTGRES_PASSWORD: oidc-test-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cyber_legends -d cyber_legends_oidc"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      APP_ENV: testing
+      DATABASE_URL: postgresql+asyncpg://cyber_legends:oidc-test-password@127.0.0.1:5432/cyber_legends_oidc
+      FRONTEND_DATABASE_URL: postgresql://cyber_legends:oidc-test-password@127.0.0.1:5432/cyber_legends_oidc
+      LLM_PROVIDER: mock
+      IMAGE_PROVIDER: mock
+      JWT_SECRET_KEY: oidc-test-backend-secret-at-least-32-characters
+      JWT_ISSUER: http://127.0.0.1:43132
+      JWT_AUDIENCE: cyber-legends
+      JWT_JWKS_URL: http://127.0.0.1:43132/jwks
+      JWT_ALGORITHM: RS256
+      AUTH_MODE: oidc
+      BACKEND_API_URL: http://127.0.0.1:8000
+      SESSION_SECRET: oidc-test-cookie-secret-at-least-32-characters
+      OIDC_SESSION_STORAGE: postgres
+      OIDC_SESSION_ENCRYPTION_KEY: oidc-test-payload-encryption-key-at-least-32-characters
+      OIDC_SESSION_MAX_AGE_SECONDS: "3600"
+      OIDC_REFRESH_SKEW_SECONDS: "1"
+      AUTH_COOKIE_MAX_BYTES: "3800"
+      OIDC_TEST_ISSUER_ENABLED: "true"
+      OIDC_ISSUER: http://127.0.0.1:43132
+      OIDC_CLIENT_ID: cyber-legends
+      OIDC_CLIENT_SECRET: deterministic-test-client-secret
+      OIDC_REDIRECT_URI: http://127.0.0.1:43131/api/auth/callback
+      OIDC_POST_LOGOUT_REDIRECT_URI: http://127.0.0.1:43131/login
+      TEST_OIDC_ISSUER: http://127.0.0.1:43132
+      TEST_OIDC_ACCESS_TOKEN_SECONDS: "2"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.9.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Install production-auth dependencies
+        run: |
+          python -m pip install -r requirements-dev.txt
+          cd frontend && pnpm install --frozen-lockfile && pnpm exec playwright install --with-deps chromium
+      - name: Migrate OIDC session storage
+        run: alembic upgrade head
+      - name: Session refresh rotation concurrency and PostgreSQL tests
+        working-directory: frontend
+        env:
+          RUN_POSTGRES_OIDC_TESTS: "1"
+        run: pnpm test:auth
+      - name: Deterministic OIDC browser login refresh rotation and logout
+        run: |
+          set -euo pipefail
+          node frontend/scripts/test-oidc-issuer.mjs > /tmp/oidc-issuer.log 2>&1 & issuer_pid=$!
+          python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 > /tmp/oidc-api.log 2>&1 & api_pid=$!
+          (cd frontend && pnpm dev --hostname 127.0.0.1 --port 43131) > /tmp/oidc-frontend.log 2>&1 & frontend_pid=$!
+          trap 'kill $frontend_pid $api_pid $issuer_pid 2>/dev/null || true' EXIT
+          for url in http://127.0.0.1:43132/.well-known/openid-configuration http://127.0.0.1:8000/ready http://127.0.0.1:43131/login; do
+            ready=0
+            for attempt in {1..60}; do
+              if curl --fail --silent "$url" >/dev/null; then ready=1; break; fi
+              sleep 1
+            done
+            test "$ready" = "1"
+          done
+          cd frontend
+          E2E_OIDC=1 PLAYWRIGHT_EXTERNAL_SERVER=1 PLAYWRIGHT_BASE_URL=http://127.0.0.1:43131 pnpm test:e2e:oidc
+      - name: Production-auth logs
+        if: failure()
+        run: cat /tmp/oidc-issuer.log /tmp/oidc-api.log /tmp/oidc-frontend.log || true
+
   test:
     runs-on: ubuntu-latest
     services:
@@ -189,7 +277,7 @@ jobs:
           path: sbom-python.json
 
   images:
-    needs: [test, frontend, full-stack-e2e]
+    needs: [test, frontend, full-stack-e2e, production-auth]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -204,6 +292,7 @@ jobs:
           JWT_AUDIENCE: cyber-legends
           JWT_JWKS_URL: https://identity.example.test/.well-known/jwks.json
           SESSION_SECRET: ci-production-session-secret-at-least-32-characters
+          OIDC_SESSION_ENCRYPTION_KEY: ci-production-oidc-encryption-key-at-least-32-characters
           OIDC_ISSUER: https://identity.example.test
           OIDC_CLIENT_ID: cyber-legends
           OIDC_CLIENT_SECRET: ci-production-oidc-secret
