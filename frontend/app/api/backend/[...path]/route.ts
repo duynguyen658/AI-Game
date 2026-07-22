@@ -19,11 +19,15 @@ const allowedResponseHeaders = [
   "etag",
 ];
 
-function errorResponse(message: string, status: number, correlationId: string) {
+function errorResponse(message: string, status: number, correlationId: string, code?: string) {
   return NextResponse.json(
-    { message, correlation_id: correlationId },
+    { message, correlation_id: correlationId, ...(code ? { code } : {}) },
     { status, headers: { "x-correlation-id": correlationId } },
   );
+}
+
+function safeCorrelationId(value: string | null) {
+  return value && /^[A-Za-z0-9._:-]{1,100}$/.test(value) ? value : randomUUID();
 }
 
 async function forward(
@@ -31,11 +35,7 @@ async function forward(
   context: { params: Promise<{ path: string[] }> },
 ) {
   const auth = getAuthAdapter();
-  const session = await auth.getServerSession();
-  const correlationId = request.headers.get("x-correlation-id") ?? randomUUID();
-  if (!session) {
-    return errorResponse("Authentication is required", 401, correlationId);
-  }
+  const correlationId = safeCorrelationId(request.headers.get("x-correlation-id"));
 
   const { path } = await context.params;
   const target = new URL(`/${path.join("/")}`, getBackendApiUrl());
@@ -43,13 +43,20 @@ async function forward(
 
   let identity: UpstreamIdentity;
   if (getAuthMode() === "demo") {
+    const session = await auth.getServerSession();
+    if (!session) return errorResponse("Authentication is required", 401, correlationId);
     identity = { mode: "demo", actorId: session.actorId, role: session.role };
   } else {
-    const accessToken = await auth.getAccessToken();
-    if (!accessToken) {
-      return errorResponse("Authentication token is missing or expired", 401, correlationId);
+    const token = await auth.getAccessToken();
+    if (token.status === "authentication_required") {
+      return errorResponse(
+        "Your session has expired. Please sign in again.",
+        401,
+        correlationId,
+        token.errorCode,
+      );
     }
-    identity = { mode: "oidc", accessToken };
+    identity = { mode: "oidc", accessToken: token.accessToken };
   }
   const headers = buildUpstreamHeaders(request.headers, correlationId, identity);
 

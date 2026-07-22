@@ -1,10 +1,17 @@
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { canAccessPath } from "@/lib/auth/permissions";
-import { decodeSession, SESSION_COOKIE } from "@/lib/auth/session";
+import { decodeSession, SESSION_COOKIE, toPublicSession } from "@/lib/auth/session";
+import { getAuthMode } from "@/lib/env/server";
+import { getOidcSessionStore } from "@/lib/auth/session-store";
 
-export function proxy(request: NextRequest) {
-  const session = decodeSession(request.cookies.get(SESSION_COOKIE)?.value);
+export async function proxy(request: NextRequest) {
+  const cookieValue = request.cookies.get(SESSION_COOKIE)?.value;
+  const session = getAuthMode() === "demo"
+    ? decodeSession(cookieValue)
+    : await getOidcSessionStore().readSession(cookieValue).then((result) =>
+      result.outcome === "FOUND" ? toPublicSession(result.session) : null,
+    );
   if (!session) {
     return NextResponse.redirect(new URL("/login", request.url));
   }

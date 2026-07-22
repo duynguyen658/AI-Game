@@ -29,12 +29,14 @@ export async function POST(request: Request) {
       { status: 422 },
     );
   }
-  const expiresAt = Math.floor(Date.now() / 1000) + 60 * 60 * 8;
+  const createdAt = Math.floor(Date.now() / 1000);
+  const sessionExpiresAt = createdAt + 60 * 60 * 8;
   const response = NextResponse.json({ user: parsed.data });
   response.cookies.set(SESSION_COOKIE, encodeSession({
     ...parsed.data,
     mode: "demo",
-    expiresAt,
+    sessionExpiresAt,
+    createdAt,
   }), { ...sessionCookieOptions, maxAge: 60 * 60 * 8 });
   return response;
 }
