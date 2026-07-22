@@ -25,6 +25,7 @@ class CampaignRepository:
         self,
         payload: CampaignCreate,
         *,
+        created_by: str = "system",
         evaluation_run_id: UUID | None = None,
         evaluation_case_id: UUID | None = None,
     ) -> CampaignModel:
@@ -40,6 +41,7 @@ class CampaignRepository:
             launch_date=payload.launch_date,
             promotion=payload.promotion,
             raw_brief=payload.raw_brief,
+            created_by=created_by,
             status=CampaignStatus.RECEIVED.value,
             is_evaluation=evaluation_run_id is not None,
             evaluation_run_id=evaluation_run_id,
@@ -74,11 +76,25 @@ class CampaignRepository:
         limit: int,
         offset: int,
         status: CampaignStatus | None = None,
+        owner_id: str | None = None,
+        reviewable_only: bool = False,
     ) -> Sequence[CampaignModel]:
         query: Select[tuple[CampaignModel]] = select(CampaignModel)
         query = query.where(CampaignModel.is_evaluation.is_(False))
         if status is not None:
             query = query.where(CampaignModel.status == status.value)
+        if owner_id is not None:
+            query = query.where(CampaignModel.created_by == owner_id)
+        if reviewable_only:
+            query = query.where(
+                CampaignModel.status.in_(
+                    [
+                        CampaignStatus.REVIEWING.value,
+                        CampaignStatus.MANUAL_REVIEW_REQUIRED.value,
+                        CampaignStatus.PENDING_APPROVAL.value,
+                    ]
+                )
+            )
         query = (
             query.order_by(CampaignModel.created_at.desc()).limit(limit).offset(offset)
         )

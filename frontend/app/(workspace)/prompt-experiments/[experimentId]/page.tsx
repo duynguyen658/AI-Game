@@ -1,0 +1,1 @@
+import { ExperimentDetail } from "./view"; export const metadata = { title: "Experiment result" }; export default async function ExperimentPage({ params }: { params: Promise<{ experimentId: string }> }) { const { experimentId } = await params; return <ExperimentDetail experimentId={experimentId} />; }

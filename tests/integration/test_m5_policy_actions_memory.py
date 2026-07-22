@@ -696,7 +696,7 @@ async def test_memory_redaction_expiration_and_api_security(
     expired_model.expires_at = datetime.now(UTC) - timedelta(days=1)
     await db_session.commit()
 
-    headers = {"x-actor-id": "reviewer-1", "x-actor-role": "reviewer"}
+    headers = {"x-actor-id": "manager-1", "x-actor-role": "manager"}
     route = f"/campaigns/{workflow.campaign_id}/memories"
     assert (await api_client.get(route)).status_code == 401
     assert (

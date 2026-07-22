@@ -76,6 +76,18 @@ class PromptRepository:
     async def get_version(self, version_id: UUID) -> PromptVersionModel | None:
         return await self.session.get(PromptVersionModel, version_id)
 
+    async def list_versions(
+        self, template_id: UUID, *, limit: int, offset: int
+    ) -> Sequence[PromptVersionModel]:
+        result = await self.session.execute(
+            select(PromptVersionModel)
+            .where(PromptVersionModel.prompt_template_id == template_id)
+            .order_by(PromptVersionModel.version.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        return result.scalars().all()
+
     async def get_active_version(self, template_id: UUID) -> PromptVersionModel | None:
         return await self.session.scalar(
             select(PromptVersionModel).where(

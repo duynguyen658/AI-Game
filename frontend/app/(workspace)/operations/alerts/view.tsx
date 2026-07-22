@@ -1,0 +1,19 @@
+"use client";
+
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { AlertTriangle, CheckCheck, RefreshCw, Wrench } from "lucide-react";
+import { toast } from "sonner";
+import { StatusBadge } from "@/components/data-display/status-badge";
+import { EmptyState, ErrorState, LoadingState } from "@/components/feedback/query-state";
+import { PageHeader } from "@/components/layout/page-header";
+import { Button } from "@/components/ui/button";
+import { operationsApi } from "@/lib/api/operations";
+import { formatDate } from "@/lib/formatting";
+
+export function AlertsConsole() {
+  const client = useQueryClient();
+  const query = useQuery({ queryKey: ["alerts"], queryFn: ({ signal }) => operationsApi.alerts(signal), refetchInterval: 15000 });
+  const lifecycle = useMutation({ mutationFn: ({ id, kind }: { id: string; kind: "ack" | "resolve" }) => kind === "ack" ? operationsApi.acknowledgeAlert(id) : operationsApi.resolveAlert(id), onSuccess: () => { toast.success("Alert lifecycle updated"); client.invalidateQueries({ queryKey: ["alerts"] }); } });
+  const reconcile = useMutation({ mutationFn: operationsApi.reconcileAlerts, onSuccess: () => { toast.success("Alert rules reconciled"); client.invalidateQueries({ queryKey: ["alerts"] }); } });
+  return <div className="space-y-6"><PageHeader title="Alerts" description="Operational alerts progress from open to acknowledged to resolved. Severity always includes text and icon context." actions={<><Button variant="secondary" onClick={() => query.refetch()}><RefreshCw className="size-4" />Refresh</Button><Button variant="secondary" onClick={() => reconcile.mutate()} disabled={reconcile.isPending}><Wrench className="size-4" />Reconcile rules</Button></>} />{query.isLoading ? <LoadingState /> : query.error ? <ErrorState error={query.error} retry={() => query.refetch()} /> : query.data?.length ? <div className="divide-y border-y bg-white">{query.data.map((alert) => <article className="grid gap-4 p-5 lg:grid-cols-[48px_minmax(0,1fr)_220px]" key={alert.alert_id}><div className="grid size-10 place-items-center border bg-[var(--warning-soft)] text-[var(--warning)]"><AlertTriangle className="size-5" aria-hidden="true" /></div><div><div className="flex flex-wrap items-center gap-2"><h2 className="font-semibold">{alert.summary}</h2><StatusBadge status={alert.severity} /><StatusBadge status={alert.status} /></div><p className="mt-2 text-xs text-[var(--muted)]">{alert.alert_type.replaceAll("_", " ")} | {alert.resource_type}: {alert.resource_id}</p><dl className="mt-3 grid gap-3 text-sm sm:grid-cols-3"><div><dt className="text-xs text-[var(--muted)]">First seen</dt><dd>{formatDate(alert.first_seen_at)}</dd></div><div><dt className="text-xs text-[var(--muted)]">Last seen</dt><dd>{formatDate(alert.last_seen_at)}</dd></div><div><dt className="text-xs text-[var(--muted)]">Occurrences</dt><dd>{alert.occurrence_count}</dd></div></dl><details className="mt-3 text-xs"><summary className="cursor-pointer font-medium">Safe details and suggested action</summary><pre className="mt-2 max-h-60 overflow-auto bg-[var(--surface-subtle)] p-3">{JSON.stringify(alert.details, null, 2)}</pre></details></div><div className="lg:border-l lg:pl-5">{alert.status === "OPEN" ? <Button onClick={() => lifecycle.mutate({ id: alert.alert_id, kind: "ack" })}><CheckCheck className="size-4" />Acknowledge</Button> : alert.status === "ACKNOWLEDGED" ? <Button onClick={() => lifecycle.mutate({ id: alert.alert_id, kind: "resolve" })}><CheckCheck className="size-4" />Resolve</Button> : <p className="text-sm text-[var(--muted)]">Resolved {formatDate(alert.resolved_at)}</p>}</div></article>)}</div> : <EmptyState title="No operational alerts" description="No alert rules currently report an open, acknowledged, or resolved condition." />}</div>;
+}

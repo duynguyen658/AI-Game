@@ -20,6 +20,7 @@ from app.api.jobs import router as jobs_router
 from app.api.operations import router as operations_router
 from app.api.workflows import router as workflows_router
 from app.api.applied_workflows import router as applied_workflows_router
+from app.api.applied_tasks import router as applied_tasks_router
 from app.api.business_impact import router as business_impact_router
 from app.api.data_analysis import router as data_analysis_router
 from app.api.document_processing import router as document_processing_router
@@ -98,6 +99,7 @@ app.include_router(media_router)
 app.include_router(data_analysis_router)
 app.include_router(document_processing_router)
 app.include_router(applied_workflows_router)
+app.include_router(applied_tasks_router)
 
 
 @app.get("/")

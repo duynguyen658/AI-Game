@@ -10,6 +10,9 @@ from app.schemas.agent_run import AgentRunRead
 from app.schemas.tool_call import ToolCallRead
 from app.service.agent_run_service import AgentRunService
 from app.service.auth_service import AuthenticatedActor, AuthService
+from app.database.models import AgentRunModel
+from app.core.exceptions import AgentRunNotFoundError
+from app.security.resource_access import ResourceAccessService
 
 router = APIRouter(tags=["Agent Runs"])
 
@@ -21,7 +24,7 @@ async def list_agent_runs(
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> list[AgentRunRead]:
-    AuthService().require_agent_run_read(actor)
+    AuthService().require_operator(actor)
     return await AgentRunService(session).list_runs(limit=limit, offset=offset)
 
 
@@ -32,6 +35,10 @@ async def get_agent_run(
     actor: Annotated[AuthenticatedActor, Depends(get_current_actor)],
 ) -> AgentRunRead:
     AuthService().require_agent_run_read(actor)
+    run = await session.get(AgentRunModel, agent_run_id)
+    if run is None:
+        raise AgentRunNotFoundError("Agent run not found")
+    await ResourceAccessService(session).require_workflow_access(actor, run.workflow_id)
     return await AgentRunService(session).get_run(agent_run_id)
 
 
@@ -41,7 +48,7 @@ async def list_agent_tool_calls(
     session: SessionDependency,
     actor: Annotated[AuthenticatedActor, Depends(get_current_actor)],
 ) -> list[ToolCallRead]:
-    AuthService().require_agent_run_read(actor)
+    AuthService().require_operator(actor)
     return await AgentRunService(session).list_tool_calls(agent_run_id)
 
 
@@ -54,6 +61,7 @@ async def list_workflow_agent_runs(
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> list[AgentRunRead]:
     AuthService().require_agent_run_read(actor)
+    await ResourceAccessService(session).require_workflow_access(actor, workflow_id)
     return await AgentRunService(session).list_workflow_runs(
         workflow_id, limit=limit, offset=offset
     )
@@ -68,6 +76,7 @@ async def list_campaign_agent_runs(
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> list[AgentRunRead]:
     AuthService().require_agent_run_read(actor)
+    await ResourceAccessService(session).require_campaign_access(actor, campaign_id)
     return await AgentRunService(session).list_campaign_runs(
         campaign_id, limit=limit, offset=offset
     )

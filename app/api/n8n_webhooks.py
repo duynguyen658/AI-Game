@@ -1,17 +1,32 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, Request, status
+from fastapi import APIRouter, Depends, Header, Query, Request, status
 
-from app.api.dependencies import SessionDependency
-from app.integrations.n8n.schemas import N8NWebhookResponse
+from app.api.dependencies import SessionDependency, get_current_actor
+from app.integrations.n8n.schemas import N8NDeliveryRead, N8NWebhookResponse
 from app.integrations.n8n.service import N8NService
 from app.operations.rate_limit import enforce_sensitive_rate_limit
+from app.service.auth_service import AuthService, AuthenticatedActor
 
 router = APIRouter(
     prefix="/integrations/n8n",
     tags=["Integrations - n8n"],
     dependencies=[Depends(enforce_sensitive_rate_limit)],
 )
+
+
+@router.get("/deliveries", response_model=list[N8NDeliveryRead])
+async def list_n8n_deliveries(
+    session: SessionDependency,
+    actor: Annotated[AuthenticatedActor, Depends(get_current_actor)],
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    endpoint: str | None = None,
+) -> list[N8NDeliveryRead]:
+    AuthService().require_operator(actor)
+    return await N8NService(session).list_deliveries(
+        limit=limit, offset=offset, endpoint=endpoint
+    )
 
 
 @router.post(

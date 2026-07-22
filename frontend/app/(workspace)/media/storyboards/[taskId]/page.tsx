@@ -1,0 +1,1 @@
+import { StoryboardDetail } from "./view"; export const metadata = { title: "Storyboard" }; export default async function StoryboardPage({ params }: { params: Promise<{ taskId: string }> }) { const { taskId } = await params; return <StoryboardDetail assetId={taskId} />; }

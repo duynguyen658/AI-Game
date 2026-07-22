@@ -51,6 +51,34 @@ class MediaRepository:
             select(MediaAssetModel).where(MediaAssetModel.task_run_id == task_run_id)
         )
 
+    async def list_assets(
+        self,
+        *,
+        limit: int,
+        offset: int,
+        owner_id: str | None = None,
+        asset_type: str | None = None,
+        status: str | None = None,
+        campaign_id: str | None = None,
+    ) -> list[MediaAssetModel]:
+        statement = select(MediaAssetModel)
+        if owner_id is not None:
+            statement = statement.where(MediaAssetModel.created_by == owner_id)
+        if asset_type is not None:
+            statement = statement.where(MediaAssetModel.asset_type == asset_type)
+        if status is not None:
+            statement = statement.where(MediaAssetModel.status == status)
+        if campaign_id is not None:
+            statement = statement.where(MediaAssetModel.campaign_id == campaign_id)
+        result = await self.session.execute(
+            statement.order_by(
+                MediaAssetModel.created_at.desc(), MediaAssetModel.media_asset_id
+            )
+            .offset(offset)
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
     async def create_attempt(
         self, model: MediaGenerationAttemptModel
     ) -> MediaGenerationAttemptModel:

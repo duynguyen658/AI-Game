@@ -1,0 +1,1 @@
+import { PromptVersionDetail } from "./view"; export const metadata = { title: "Prompt version" }; export default async function PromptVersionPage({ params }: { params: Promise<{ templateId: string; versionId: string }> }) { const { templateId, versionId } = await params; return <PromptVersionDetail templateId={templateId} versionId={versionId} />; }

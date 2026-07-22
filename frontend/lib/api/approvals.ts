@@ -1,0 +1,3 @@
+import type { components } from "@/generated/openapi"; import { apiRequest, jsonBody } from "./client";
+export type ActionRequest = components["schemas"]["ActionRequestRead"];
+export const approvalsApi = { actions: (signal?: AbortSignal) => apiRequest<ActionRequest[]>("/action-requests?limit=100", { signal }), approve: (id: string, version: number) => apiRequest<ActionRequest>(`/action-requests/${id}/approve`, { method: "POST", body: jsonBody({ expected_version: version }) }), reject: (id: string, version: number, reason: string) => apiRequest<ActionRequest>(`/action-requests/${id}/reject`, { method: "POST", body: jsonBody({ expected_version: version, reason }) }) };

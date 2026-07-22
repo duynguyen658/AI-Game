@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from app.core.config import Settings
 from app.core.constants import ProviderName
-from app.core.exceptions import ProviderCapabilityError
+from app.core.exceptions import LLMProviderError, ProviderCapabilityError
 from typing import Protocol
 
 from pydantic import BaseModel
@@ -28,6 +28,18 @@ class CompletionClient(Protocol):
     async def complete_with_tools(
         self, request: CompletionRequest
     ) -> NormalizedCompletion: ...
+
+
+class DemoFailingLLMClient(MockLLMClient):
+    async def generate_structured(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        output_schema: type[BaseModel],
+    ) -> BaseModel:
+        del system_prompt, user_prompt, output_schema
+        raise LLMProviderError("Deterministic demo provider failure")
 
 
 DEFAULT_CAPABILITIES: dict[ProviderName, ModelCapabilities] = {
@@ -120,6 +132,11 @@ class ProviderRegistry:
 def build_provider_registry(settings: Settings) -> ProviderRegistry:
     registry = ProviderRegistry(settings)
     registry.register(ProviderName.MOCK, MockLLMClient())
+    if settings.demo_provider_aliases:
+        registry.register(ProviderName.OPENAI, MockLLMClient())
+        registry.register(ProviderName.GEMINI, DemoFailingLLMClient())
+        registry.register(ProviderName.ANTHROPIC, MockLLMClient())
+        return registry
     if settings.openai_api_key or settings.llm_api_key:
         registry.register(ProviderName.OPENAI, OpenAILLMClient(settings))
     if settings.gemini_api_key:

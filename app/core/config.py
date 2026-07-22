@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     llm_max_estimated_cost: float = Field(default=5.0, ge=0)
     llm_timeout_seconds: int = Field(default=60, ge=1, le=300)
     llm_max_retries: int = Field(default=2, ge=0, le=5)
+    demo_provider_aliases: bool = False
 
     jwt_secret_key: SecretStr = SecretStr("change-me")
     jwt_algorithm: str = "HS256"
@@ -103,6 +104,8 @@ class Settings(BaseSettings):
     policy_version: str = "m5"
     jwt_issuer: str | None = None
     jwt_audience: str | None = None
+    jwt_jwks_url: str | None = None
+    jwt_role_claim: str = "role"
 
     log_level: str = "INFO"
 
@@ -145,6 +148,8 @@ class Settings(BaseSettings):
             )
 
         if self.app_env == "production":
+            if self.demo_provider_aliases:
+                raise ValueError("DEMO_PROVIDER_ALIASES must be disabled in production")
             unsafe_values = {
                 "change-me",
                 "",
@@ -159,6 +164,17 @@ class Settings(BaseSettings):
             for field_name, secret in secret_fields.items():
                 if secret.get_secret_value() in unsafe_values:
                     raise ValueError(f"{field_name} must be set safely in production")
+            if not self.jwt_issuer or not self.jwt_audience:
+                raise ValueError(
+                    "JWT_ISSUER and JWT_AUDIENCE are required in production"
+                )
+            if (
+                self.jwt_algorithm.startswith(("RS", "ES", "PS"))
+                and not self.jwt_jwks_url
+            ):
+                raise ValueError(
+                    "JWT_JWKS_URL is required for asymmetric JWT validation"
+                )
 
         return self
 

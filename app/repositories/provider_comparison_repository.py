@@ -24,6 +24,20 @@ class ProviderComparisonRepository:
     async def get(self, comparison_id: UUID) -> ProviderComparisonModel | None:
         return await self.session.get(ProviderComparisonModel, comparison_id)
 
+    async def list(
+        self, *, limit: int, offset: int
+    ) -> Sequence[ProviderComparisonModel]:
+        result = await self.session.execute(
+            select(ProviderComparisonModel)
+            .order_by(
+                ProviderComparisonModel.created_at.desc(),
+                ProviderComparisonModel.comparison_id,
+            )
+            .limit(limit)
+            .offset(offset)
+        )
+        return result.scalars().all()
+
     async def get_for_update(
         self, comparison_id: UUID
     ) -> ProviderComparisonModel | None:

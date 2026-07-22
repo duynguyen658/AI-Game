@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from uuid import UUID
 
-from app.core.exceptions import M7ValidationError
+from app.core.exceptions import M7ResourceNotFoundError, M7ValidationError
 
 
 class LocalMediaStorage:
@@ -25,3 +25,12 @@ class LocalMediaStorage:
     def validate_uri(uri: str) -> None:
         if not uri.startswith("media://") or "/" in uri.removeprefix("media://"):
             raise M7ValidationError("Media storage URI is invalid")
+
+    def resolve(self, uri: str) -> Path:
+        self.validate_uri(uri)
+        target = (self.root / uri.removeprefix("media://")).resolve()
+        if self.root not in target.parents:
+            raise M7ValidationError("Media storage path is invalid")
+        if not target.is_file():
+            raise M7ResourceNotFoundError("Media content is unavailable")
+        return target

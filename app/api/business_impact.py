@@ -16,6 +16,7 @@ from app.schemas.business_impact import (
     UserFeedbackRead,
 )
 from app.service.auth_service import AuthService, AuthenticatedActor
+from app.security.resource_access import ResourceAccessService
 
 router = APIRouter(tags=["Applied AI - Business Impact"])
 
@@ -67,6 +68,7 @@ async def record_task_feedback(
     session: SessionDependency,
     actor: Annotated[AuthenticatedActor, Depends(get_current_actor)],
 ) -> UserFeedbackRead:
+    await ResourceAccessService(session).require_task_access(actor, task_run_id)
     return await BusinessImpactService(session).record_feedback(
         task_run_id, data, actor=actor
     )

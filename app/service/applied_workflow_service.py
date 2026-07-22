@@ -6,7 +6,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.constants import AppliedTaskStatus
+from app.core.constants import AppliedTaskStatus, AppliedWorkflowType
 from app.core.exceptions import M7ResourceNotFoundError
 from app.database.models import AppliedWorkflowTaskModel
 from app.repositories.applied_workflow_repository import AppliedWorkflowRepository
@@ -26,6 +26,24 @@ class AppliedWorkflowService:
         if model is None:
             raise M7ResourceNotFoundError("Applied workflow task not found")
         return model
+
+    async def list(
+        self,
+        *,
+        limit: int = 20,
+        offset: int = 0,
+        owner_id: str | None = None,
+        workflow_type: AppliedWorkflowType | None = None,
+        status: AppliedTaskStatus | None = None,
+    ) -> list[AppliedTaskRead]:
+        models = await self.repository.list(
+            limit=min(max(limit, 1), 100),
+            offset=max(offset, 0),
+            owner_id=owner_id,
+            workflow_type=workflow_type.value if workflow_type else None,
+            status=status.value if status else None,
+        )
+        return [task_to_schema(model) for model in models]
 
     async def complete(
         self,

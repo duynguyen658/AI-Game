@@ -1,0 +1,1 @@
+import { DocumentDetail } from "./view"; export const metadata = { title: "Document result" }; export default async function DocumentDetailPage({ params }: { params: Promise<{ taskId: string }> }) { const { taskId } = await params; return <DocumentDetail taskId={taskId} />; }

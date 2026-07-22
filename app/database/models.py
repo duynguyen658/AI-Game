@@ -54,6 +54,7 @@ class CampaignModel(Base):
             name="ck_campaign_quality_score_range",
         ),
         Index("ix_campaigns_status_created_at", "status", "created_at"),
+        Index("ix_campaigns_owner_created_at", "created_by", "created_at"),
         Index("ix_campaigns_evaluation_owner", "is_evaluation", "evaluation_run_id"),
     )
 
@@ -68,6 +69,7 @@ class CampaignModel(Base):
     launch_date: Mapped[date] = mapped_column(Date, nullable=False)
     promotion: Mapped[str] = mapped_column(Text, nullable=False)
     raw_brief: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[str] = mapped_column(String(200), nullable=False)
     status: Mapped[str] = mapped_column(
         String(50),
         nullable=False,
@@ -1699,3 +1701,53 @@ class N8NWebhookReceiptModel(Base):
     received_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now
     )
+
+
+class FrontendOidcSessionModel(Base):
+    __tablename__ = "frontend_oidc_sessions"
+    __table_args__ = (
+        CheckConstraint(
+            "char_length(session_id_hash) = 64",
+            name="ck_frontend_oidc_session_hash_length",
+        ),
+        CheckConstraint(
+            "session_version >= 1",
+            name="ck_frontend_oidc_session_version_positive",
+        ),
+        CheckConstraint(
+            "session_expires_at > created_at",
+            name="ck_frontend_oidc_session_expiry_order",
+        ),
+        CheckConstraint(
+            "(refresh_owner_hash IS NULL) = (refresh_started_at IS NULL)",
+            name="ck_frontend_oidc_refresh_lease_consistency",
+        ),
+        Index("ix_frontend_oidc_sessions_expiry", "session_expires_at"),
+        Index(
+            "ix_frontend_oidc_sessions_revoked",
+            "revoked_at",
+            postgresql_where=text("revoked_at IS NOT NULL"),
+        ),
+    )
+
+    session_id_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    encrypted_payload: Mapped[str] = mapped_column(Text, nullable=False)
+    actor_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    actor_role: Mapped[str] = mapped_column(String(50), nullable=False)
+    access_token_expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    session_expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
+    )
+    last_refreshed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    session_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    refresh_owner_hash: Mapped[str | None] = mapped_column(String(64))
+    refresh_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

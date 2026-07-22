@@ -249,6 +249,26 @@ class MediaService:
     async def get(self, asset_id: UUID) -> MediaAssetRead:
         return media_to_schema(await self._asset(asset_id))
 
+    async def list_assets(
+        self,
+        *,
+        limit: int = 20,
+        offset: int = 0,
+        owner_id: str | None = None,
+        asset_type: MediaAssetType | None = None,
+        status: MediaAssetStatus | None = None,
+        campaign_id: str | None = None,
+    ) -> list[MediaAssetRead]:
+        assets = await self.media.list_assets(
+            limit=min(max(limit, 1), 100),
+            offset=max(offset, 0),
+            owner_id=owner_id,
+            asset_type=asset_type.value if asset_type else None,
+            status=status.value if status else None,
+            campaign_id=campaign_id,
+        )
+        return [media_to_schema(asset) for asset in assets]
+
     async def review(
         self,
         asset_id: UUID,

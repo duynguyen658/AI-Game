@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -88,6 +89,12 @@ class ProviderComparisonService:
     async def get(self, comparison_id: UUID) -> ProviderComparisonRead:
         return comparison_to_schema(await self._required(comparison_id))
 
+    async def list(self, *, limit: int, offset: int) -> list[ProviderComparisonRead]:
+        models = await ProviderComparisonRepository(self._session()).list(
+            limit=min(limit, 100), offset=max(offset, 0)
+        )
+        return [comparison_to_schema(model) for model in models]
+
     async def run(
         self,
         comparison_id: UUID,
@@ -136,7 +143,9 @@ class ProviderComparisonService:
         await session.commit()
         return comparison_to_schema(model)
 
-    async def results(self, comparison_id: UUID) -> list[ProviderComparisonCaseRead]:
+    async def results(
+        self, comparison_id: UUID
+    ) -> builtins.list[ProviderComparisonCaseRead]:
         await self._required(comparison_id)
         return [
             ProviderComparisonCaseRead.model_validate(row)

@@ -3,9 +3,9 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
     volumes:
       - postgres_production_data:/var/lib/postgresql/data
@@ -22,7 +22,7 @@ services:
     command: ["alembic", "upgrade", "head"]
     env_file: .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:?required}:${POSTGRES_PASSWORD:?required}@postgres:5432/${POSTGRES_DB:?required}
     depends_on:
       postgres:
         condition: service_healthy
@@ -35,9 +35,18 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-    ports:
-      - "${APP_PORT:-8000}:8000"
+      APP_ENV: production
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:?required}:${POSTGRES_PASSWORD:?required}@postgres:5432/${POSTGRES_DB:?required}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY is required}
+      JWT_ISSUER: ${JWT_ISSUER:?JWT_ISSUER is required}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:?JWT_AUDIENCE is required}
+      JWT_JWKS_URL: ${JWT_JWKS_URL:?JWT_JWKS_URL is required}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-RS256}
+      JWT_ROLE_CLAIM: ${JWT_ROLE_CLAIM:-role}
+    expose:
+      - "8000"
+    volumes:
+      - media_production_data:/app/var/media
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -61,11 +70,50 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      APP_ENV: production
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:?required}:${POSTGRES_PASSWORD:?required}@postgres:5432/${POSTGRES_DB:?required}
+    volumes:
+      - media_production_data:/app/var/media
     depends_on:
       migrate:
         condition: service_completed_successfully
     stop_grace_period: 75s
 
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      BACKEND_API_URL: http://api:8000
+      FRONTEND_DATABASE_URL: postgresql://${POSTGRES_USER:?required}:${POSTGRES_PASSWORD:?required}@postgres:5432/${POSTGRES_DB:?required}
+      AUTH_MODE: oidc
+      DEMO_AUTH_ENABLED: "false"
+      SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET is required}
+      OIDC_SESSION_STORAGE: ${OIDC_SESSION_STORAGE:-postgres}
+      OIDC_SESSION_ENCRYPTION_KEY: ${OIDC_SESSION_ENCRYPTION_KEY:?OIDC_SESSION_ENCRYPTION_KEY is required}
+      OIDC_SESSION_MAX_AGE_SECONDS: ${OIDC_SESSION_MAX_AGE_SECONDS:-36000}
+      OIDC_REFRESH_SKEW_SECONDS: ${OIDC_REFRESH_SKEW_SECONDS:-90}
+      AUTH_COOKIE_MAX_BYTES: ${AUTH_COOKIE_MAX_BYTES:-3800}
+      OIDC_TEST_ISSUER_ENABLED: "false"
+      OIDC_ISSUER: ${OIDC_ISSUER:?OIDC_ISSUER is required}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:?OIDC_CLIENT_ID is required}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:?OIDC_CLIENT_SECRET is required}
+      OIDC_REDIRECT_URI: ${OIDC_REDIRECT_URI:?OIDC_REDIRECT_URI is required}
+      OIDC_POST_LOGOUT_REDIRECT_URI: ${OIDC_POST_LOGOUT_REDIRECT_URI:?OIDC_POST_LOGOUT_REDIRECT_URI is required}
+      OIDC_SCOPE: ${OIDC_SCOPE:-openid profile email}
+      OIDC_ROLE_CLAIM: ${OIDC_ROLE_CLAIM:-role}
+      BFF_MAX_BODY_BYTES: ${BFF_MAX_BODY_BYTES:-1048576}
+      BFF_MAX_UPLOAD_BYTES: ${BFF_MAX_UPLOAD_BYTES:-5242880}
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    stop_grace_period: 20s
+
 volumes:
   postgres_production_data:
+  media_production_data:

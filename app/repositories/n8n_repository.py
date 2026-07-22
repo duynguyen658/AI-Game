@@ -30,3 +30,19 @@ class N8NRepository:
         self.session.add(model)
         await self.session.flush()
         return model
+
+    async def list(
+        self, *, limit: int, offset: int, endpoint: str | None = None
+    ) -> list[N8NWebhookReceiptModel]:
+        statement = select(N8NWebhookReceiptModel)
+        if endpoint is not None:
+            statement = statement.where(N8NWebhookReceiptModel.endpoint == endpoint)
+        result = await self.session.execute(
+            statement.order_by(
+                N8NWebhookReceiptModel.received_at.desc(),
+                N8NWebhookReceiptModel.receipt_id,
+            )
+            .offset(offset)
+            .limit(limit)
+        )
+        return list(result.scalars().all())

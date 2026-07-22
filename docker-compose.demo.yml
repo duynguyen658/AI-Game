@@ -1,0 +1,100 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: cyber_legends_demo
+      POSTGRES_USER: cyber_legends
+      POSTGRES_PASSWORD: demo-database-password
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cyber_legends -d cyber_legends_demo"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - postgres_demo_data:/var/lib/postgresql/data
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    command: ["alembic", "upgrade", "head"]
+    environment: &backend-demo-env
+      APP_ENV: development
+      DATABASE_URL: postgresql+asyncpg://cyber_legends:demo-database-password@postgres:5432/cyber_legends_demo
+      LLM_PROVIDER: mock
+      DEMO_PROVIDER_ALIASES: "true"
+      IMAGE_PROVIDER: mock
+      JOB_MAX_ATTEMPTS: "1"
+      JWT_SECRET_KEY: demo-jwt-secret-at-least-32-characters
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    environment: *backend-demo-env
+    expose:
+      - "8000"
+    volumes:
+      - media_demo_data:/app/var/media
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3)"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    environment: *backend-demo-env
+    volumes:
+      - media_demo_data:/app/var/media
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+
+  seed:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    command: ["python", "-m", "app.demo_seed"]
+    environment: *backend-demo-env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    environment:
+      BACKEND_API_URL: http://api:8000
+      AUTH_MODE: demo
+      DEMO_AUTH_ENABLED: "true"
+      ALLOW_PRODUCTION_DEMO: "true"
+      SESSION_SECRET: demo-frontend-session-secret-at-least-32-characters
+      BFF_MAX_BODY_BYTES: "1048576"
+      BFF_MAX_UPLOAD_BYTES: "5242880"
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/login >/dev/null || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  postgres_demo_data:
+  media_demo_data:
